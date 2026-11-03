@@ -55,8 +55,12 @@ def test_pages_render_and_controls_need_password(engine):
                  "/match/KXATPMATCH-26NOV04AAABBB", "/partials/match/KXATPMATCH-26NOV04AAABBB", "/api/match/KXATPMATCH-26NOV04AAABBB/chart"):
         r = c.get(path)
         assert r.status_code == 200, (path, r.text[:300])
-    home = c.get("/").text
-    assert "Carlos Alcaraz" in home and "LIVE" in home and "85¢" in home
+    assert "No open positions" in c.get("/").text  # default tab: your positions (none yet)
+    live = c.get("/?view=live").text
+    assert "Carlos Alcaraz" in live and "LIVE" in live and "85¢" in live
+    assert "Carlos Alcaraz" not in c.get("/?view=live&tour=WTA").text
+    for v in ("upcoming", "finished"):
+        assert c.get(f"/?view={v}").status_code == 200
     r = c.post("/controls/agent", data={"action": "stop"})
     assert r.status_code == 401 and "Basic" in r.headers["www-authenticate"]
     assert engine.agent_enabled

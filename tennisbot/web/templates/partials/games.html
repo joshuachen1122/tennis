@@ -1,17 +1,15 @@
-<div id="games" hx-get="/partials/games" hx-trigger="every 5s" hx-swap="outerHTML">
-  <section data-section="live">
-    <div class="grid">{% for g in G.live %}{% include "partials/tile.html" %}{% endfor %}</div>
-  </section>
-  <section data-section="upcoming">
-    {% for day, games in G.upcoming_days %}
-    <div data-day>
+{% set every = "60s" if G.view == "upcoming" else "5s" %}
+<div id="games" hx-get="/partials/games?view={{ G.view }}&tour={{ G.tour | urlencode }}" hx-trigger="every {{ every }}" hx-swap="outerHTML">
+  {% if G.view == "upcoming" %}
+    {% for day, games in G.days %}
       <h2 class="section-h">{{ day }}</h2>
       <div class="grid">{% for g in games %}{% include "partials/tile.html" %}{% endfor %}</div>
-    </div>
     {% endfor %}
-  </section>
-  <section data-section="finished">
-    <div class="grid">{% for g in G.finished %}{% include "partials/tile.html" %}{% endfor %}</div>
-  </section>
-  <p id="no-games" class="empty" hidden>Nothing here right now. Matches with Kalshi markets appear as soon as they open; finished shows the last 24h of matches we traded.</p>
+    {% if G.more %}<p class="empty">Showing the next {{ G.cards | length }} matches · {{ G.more }} more later. Pick a tour to narrow it down.</p>{% endif %}
+  {% else %}
+    <div class="grid">{% for g in G.cards %}{% include "partials/tile.html" %}{% endfor %}</div>
+  {% endif %}
+  {% if not G.cards %}
+    <p class="empty">{% if G.view == "mine" %}No open positions right now. The moment a strategy enters a trade it shows up here — see <a href="/?view=live" style="text-decoration:underline">Live</a> for every match in play.{% elif G.view == "live" %}No live matches right now.{% elif G.view == "finished" %}No traded matches have finished in the last 24h.{% else %}No upcoming matches.{% endif %}</p>
+  {% endif %}
 </div>

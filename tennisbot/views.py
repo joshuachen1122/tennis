@@ -113,60 +113,103 @@ def game_card(engine: "Engine", rt: "MatchRT", closed: list[PaperTrade]) -> dict
     }
 
 
-async def games_view(engine: "Engine") -> dict[str, Any]:
+VIEWS = ("mine", "live", "upcoming", "finished")
+UPCOMING_LIMIT = 60
+
+
+def _status(rt: "MatchRT") -> str:
+    if rt.live:
+        return "live"
+    if rt.final or rt.row.status in ("final", "settled"):
+        return "final"
+    return "upcoming"
+
+
+async def games_view(engine: "Engine", view: str = "mine", tour: str = "all") -> dict[str, Any]:
+    """Build tiles only for the tab being viewed (the page used to render ~300 tiles and hide most
+    of them in the browser). Tab counts and the summary come from cheap in-memory passes."""
+    view = view if view in VIEWS else "mine"
     since = utcnow() - timedelta(hours=24)
+    now = utcnow()
     async with engine.db.session() as s:
         closed = list((await s.execute(select(PaperTrade).where(PaperTrade.closed_at.is_not(None), PaperTrade.opened_at >= since))).scalars())
-        closed_events = {t.event_ticker for t in closed}
-        finished_rows = {m.event_ticker: m for m in (await s.execute(select(Match).where(Match.event_ticker.in_(closed_events)))).scalars()} if closed_events else {}
+        finished_rows: dict[str, Match] = {}
+        if view == "finished" and closed:
+            evs = {t.event_ticker for t in closed}
+            finished_rows = {m.event_ticker: m for m in (await s.execute(select(Match).where(Match.event_ticker.in_(evs)))).scalars()}
     by_event: dict[str, list[PaperTrade]] = defaultdict(list)
     for t in closed:
         by_event[t.event_ticker].append(t)
+    open_events = {t.event_ticker for t in engine.open_trades.values()}
+    horizon = now + timedelta(hours=36)
 
-    live, upcoming, finished = [], [], []
-    now = utcnow()
-    seen = set()
+    def in_tour(rt: "MatchRT") -> bool:
+        return tour == "all" or TOURS.get(rt.row.series, rt.row.series) == tour
+
+    counts = {"mine": len(open_events), "live": 0, "upcoming": 0, "finished": 0}
+    picked: list["MatchRT"] = []
     for rt in engine.matches.values():
-        card = game_card(engine, rt, by_event.get(rt.row.event_ticker, []))
-        seen.add(rt.row.event_ticker)
-        if card["status"] == "live":
-            live.append(card)
-        elif card["status"] == "upcoming":
-            if card["scheduled"] is None or card["scheduled"] <= now + timedelta(hours=36):
-                upcoming.append(card)
-        elif card["trades"]:
-            finished.append(card)
-    # Settled matches that have left memory but carry today's trades.
-    from tennisbot.engine import MatchRT
-
-    for ev, row in finished_rows.items():
-        if ev in seen:
+        st = _status(rt)
+        if st == "live":
+            counts["live"] += 1
+        elif st == "upcoming" and (rt.row.scheduled is None or _aware(rt.row.scheduled) <= horizon):
+            counts["upcoming"] += 1
+        if not in_tour(rt):
             continue
-        rt = MatchRT(row=row)
-        rt.final = True
-        card = game_card(engine, rt, by_event.get(ev, []))
-        card["status"] = "final"
-        finished.append(card)
+        ev = rt.row.event_ticker
+        if view == "mine" and ev in open_events:
+            picked.append(rt)
+        elif view == "live" and st == "live":
+            picked.append(rt)
+        elif view == "upcoming" and st == "upcoming" and (rt.row.scheduled is None or _aware(rt.row.scheduled) <= horizon):
+            picked.append(rt)
+        elif view == "finished" and st == "final" and (ev in by_event or ev in open_events):
+            picked.append(rt)
+    counts["finished"] = len({t.event_ticker for t in closed} - {rt.row.event_ticker for rt in engine.matches.values() if _status(rt) != "final"})
 
-    live.sort(key=lambda c: (not c["has_open"], not c["trades"], -(c["volume"] or 0)))
-    upcoming.sort(key=lambda c: (c["scheduled"] or now + timedelta(days=9), -(c["volume"] or 0)))
-    finished.sort(key=lambda c: max((t["closed"] or t["opened"] or now) for t in c["trades"]), reverse=True)
-    days: dict[str, list[dict]] = defaultdict(list)
-    for c in upcoming:
-        key = c["scheduled"].strftime("%a, %b %-d") if c["scheduled"] else "Time to be announced"
-        days[key].append(c)
-    open_rows = [t for c in live + upcoming + finished for t in c["trades"] if t["open"]]
-    return {
-        "live": live, "upcoming_days": list(days.items()), "finished": finished,
-        "summary": {
-            "open": len(open_rows),
-            "at_risk": sum(t["cost"] for t in open_rows),
-            "unreal": sum(t["unreal"] or 0 for t in open_rows),
-            "realized_24h": sum(t.pnl or 0 for t in closed),
-            "live_matches": len(live),
-        },
-        "tours": [t for t in TOUR_ORDER if any(c["tour"] == t for c in live + upcoming + finished)],
-    }
+    more = 0
+    if view == "upcoming":
+        picked.sort(key=lambda r: (_aware(r.row.scheduled) or now + timedelta(days=9), -(r.volume or 0)))
+        more = max(0, len(picked) - UPCOMING_LIMIT)
+        picked = picked[:UPCOMING_LIMIT]
+    cards = [game_card(engine, rt, by_event.get(rt.row.event_ticker, [])) for rt in picked]
+    if view == "finished":
+        from tennisbot.engine import MatchRT
+
+        seen = {c["event"] for c in cards}
+        for ev, row in finished_rows.items():
+            if ev in seen or (tour != "all" and TOURS.get(row.series, row.series) != tour):
+                continue
+            rt = MatchRT(row=row)
+            rt.final = True
+            card = game_card(engine, rt, by_event.get(ev, []))
+            card["status"] = "final"
+            cards.append(card)
+        cards.sort(key=lambda c: max((t["closed"] or t["opened"] or now) for t in c["trades"]) if c["trades"] else now, reverse=True)
+    elif view in ("mine", "live"):
+        cards.sort(key=lambda c: (not c["has_open"], c["status"] != "live", -(c["volume"] or 0)))
+
+    days: list[tuple[str, list[dict]]] = []
+    if view == "upcoming":
+        grouped: dict[str, list[dict]] = defaultdict(list)
+        for c in cards:
+            grouped[c["scheduled"].strftime("%a, %b %-d") if c["scheduled"] else "Time to be announced"].append(c)
+        days = list(grouped.items())
+    return {"view": view, "tour": tour, "cards": cards, "days": days, "more": more, "counts": counts,
+            "summary": summary_view(engine, closed)}
+
+
+def summary_view(engine: "Engine", closed_24h: list[PaperTrade]) -> dict[str, Any]:
+    from tennisbot.strategies import taker_fee_cents
+
+    at_risk = unreal = 0.0
+    for t in engine.open_trades.values():
+        cost = t.count * t.entry_price + t.entry_fee
+        at_risk += cost
+        bid = engine._bbo(t.ticker)[0]
+        if bid is not None:
+            unreal += bid * t.count - taker_fee_cents(t.count, bid, engine.fee_rate.get(t.series, 0.07)) - cost
+    return {"open": len(engine.open_trades), "at_risk": at_risk, "unreal": unreal, "realized_24h": sum(t.pnl or 0 for t in closed_24h)}
 
 
 async def game_detail(engine: "Engine", event: str) -> Optional[dict[str, Any]]:

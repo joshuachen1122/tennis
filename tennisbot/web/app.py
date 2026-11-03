@@ -118,8 +118,8 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         return {"ok": True, "tracked": len(engine.matches), "live": engine.health.get("live"), "ws": engine.stream.connected}
 
     @app.get("/", response_class=HTMLResponse)
-    async def games(request: Request) -> HTMLResponse:
-        return page(request, "games.html", page="games", G=await games_view(engine))
+    async def games(request: Request, view: str = "mine", tour: str = "all") -> HTMLResponse:
+        return page(request, "games.html", page="games", G=await games_view(engine, view, tour))
 
     @app.get("/performance", response_class=HTMLResponse)
     async def performance(request: Request) -> HTMLResponse:
@@ -153,7 +153,8 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
     @app.get("/partials/{name}", response_class=HTMLResponse)
     async def partial(request: Request, name: str) -> HTMLResponse:
         if name in ("games", "summary"):
-            return page(request, f"partials/{name}.html", G=await games_view(engine))
+            q = request.query_params
+            return page(request, f"partials/{name}.html", G=await games_view(engine, q.get("view", "mine"), q.get("tour", "all")))
         if name == "pnl":
             return page(request, "partials/pnl.html", pnl=await engine.pnl_series())
         if name in ("data", "review", "controls"):

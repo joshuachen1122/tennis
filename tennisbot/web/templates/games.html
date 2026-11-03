@@ -5,8 +5,8 @@
   .sum { display: flex; gap: 28px; flex-wrap: wrap; }
   .sum .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .tabs { display: flex; gap: 22px; align-items: baseline; margin-bottom: 14px; flex-wrap: wrap; }
-  .tabs button { font-family: "Barlow Condensed", sans-serif; font-size: 24px; font-weight: 600; color: var(--k-text-3); }
-  .tabs button[aria-pressed="true"] { color: var(--k-text-1); }
+  .tabs a { font-family: "Barlow Condensed", sans-serif; font-size: 24px; font-weight: 600; color: var(--k-text-3); }
+  .tabs a[aria-current="page"] { color: var(--k-text-1); } .tabs a:hover { color: var(--k-text-2); }
   .tabs .n { font-size: 15px; margin-left: 4px; color: var(--k-text-3); }
   .chips { display: flex; gap: 10px; margin-bottom: 24px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(500px, 100%), 1fr)); gap: 16px; }
@@ -42,60 +42,27 @@
   .pos-line .pl { margin-left: auto; font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; }
   .tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--k-blue); }
   .tile-foot { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--k-text-2); min-height: 22px; align-items: center; }
-  @media (max-width: 640px) { .tabs { gap: 14px; } .tabs button { font-size: 20px; } .sum { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; width: 100%; } .sum .v { font-size: 19px; } .score { font-size: 14px; } .score span { min-width: 15px; } .px .model { display: none; } .pill-btn { min-width: 64px; } }
+  @media (max-width: 640px) { .tabs { gap: 14px; } .tabs a { font-size: 20px; } .sum { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; width: 100%; } .sum .v { font-size: 19px; } .score { font-size: 14px; } .score span { min-width: 15px; } .px .model { display: none; } .pill-btn { min-width: 64px; } }
 {% endblock %}
 {% block body %}
 <div class="page-head">
   <h1 class="cond headline-20" style="margin:0">Tennis</h1>
   {% include "partials/summary.html" %}
 </div>
-<div class="tabs" role="group" aria-label="Show">
-  <button data-view="live" aria-pressed="true">Live<span class="n" data-count="live">{{ G.live | length }}</span></button>
-  <button data-view="mine" aria-pressed="false">Your positions<span class="n" data-count="mine"></span></button>
-  <button data-view="upcoming" aria-pressed="false">Upcoming</button>
-  <button data-view="finished" aria-pressed="false">Finished</button>
-</div>
-<div class="chips scroll-x" role="group" aria-label="Tour">
-  <button class="chip" data-tour="all" aria-pressed="true">All</button>
-  {% for t in ["ATP", "WTA", "Challenger", "WTA 125", "ITF Men", "ITF Women"] %}<button class="chip" data-tour="{{ t }}" aria-pressed="false">{{ t }}</button>{% endfor %}
-</div>
+{% set labels = {"mine": "Your positions", "live": "Live", "upcoming": "Upcoming", "finished": "Finished"} %}
+<nav class="tabs" aria-label="Show">
+  {% for v in ["mine", "live", "upcoming", "finished"] %}<a href="/?view={{ v }}{% if G.tour != 'all' %}&tour={{ G.tour | urlencode }}{% endif %}" aria-current="{{ 'page' if G.view == v else 'false' }}">{{ labels[v] }}{% if G.counts[v] %}<span class="n">{{ G.counts[v] }}</span>{% endif %}</a>{% endfor %}
+</nav>
+<nav class="chips scroll-x" aria-label="Tour">
+  {% for t in ["all", "ATP", "WTA", "Challenger", "WTA 125", "ITF Men", "ITF Women"] %}<a class="chip" href="/?view={{ G.view }}{% if t != 'all' %}&tour={{ t | urlencode }}{% endif %}" aria-pressed="{{ 'true' if G.tour == t else 'false' }}">{{ "All" if t == "all" else t }}</a>{% endfor %}
+</nav>
 {% include "partials/games.html" %}
 {% endblock %}
 {% block script %}
 <script>
-  // Live / positions / upcoming / finished, and a tour filter: applied client-side so the 5s
-  // refresh keeps the reader's choice (remembered across visits).
-  let view = "live", tour = "all";
-  try { view = localStorage.getItem("gview") || "live"; tour = localStorage.getItem("gtour") || "all"; } catch {}
-  function apply() {
-    document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
-    document.querySelectorAll(".chips .chip").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tour === tour)));
-    document.querySelectorAll("[data-section]").forEach((sec) => {
-      let shown = 0;
-      sec.querySelectorAll(".tile").forEach((t) => {
-        const okView = view === "mine" ? t.dataset.mine === "1" : sec.dataset.section === view;
-        const ok = okView && (tour === "all" || t.dataset.tour === tour);
-        t.hidden = !ok; if (ok) shown++;
-      });
-      sec.querySelectorAll("[data-day]").forEach((d) => { d.hidden = ![...d.querySelectorAll(".tile")].some((t) => !t.hidden); });
-      sec.hidden = shown === 0;
-    });
-    const mine = document.querySelectorAll('.tile[data-mine="1"]').length;
-    document.querySelector('[data-count="mine"]').textContent = mine || "";
-    const live = document.querySelectorAll('[data-section="live"] .tile').length;
-    document.querySelector('[data-count="live"]').textContent = live;
-    const any = [...document.querySelectorAll(".tile")].some((t) => !t.hidden);
-    const empty = document.getElementById("no-games");
-    if (empty) empty.hidden = any;
-  }
   document.addEventListener("click", (e) => {
-    const v = e.target.closest(".tabs button"), c = e.target.closest(".chips .chip");
-    if (v) view = v.dataset.view;
-    if (c) tour = c.dataset.tour;
-    if (v || c) { try { localStorage.setItem("gview", view); localStorage.setItem("gtour", tour); } catch {} apply(); return; }
     const tile = e.target.closest(".tile");
     if (tile && !e.target.closest("a")) location.href = tile.dataset.href;
   });
-  htmx.onLoad(apply);
 </script>
 {% endblock %}
