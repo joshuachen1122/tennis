@@ -22,6 +22,7 @@ from sqlalchemy import select, text
 from tennisbot.db import BookTick, Match, PaperTrade, ScoreEvent
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 EXPORT_TABLES = {"matches", "score_events", "book_ticks", "trade_bars", "paper_trades", "signals", "llm_notes"}
 
 
@@ -35,16 +36,20 @@ def _password_ok(header: Optional[str], password: str) -> bool:
     return secrets.compare_digest(supplied.encode(), password.encode())
 
 
+def _num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _cents(v: Any) -> str:
-    return "—" if v is None else f"{v:.0f}"
+    return f"{v:.0f}" if _num(v) else "—"
 
 
 def _pct(v: Any, digits: int = 1) -> str:
-    return "—" if v is None else f"{v * 100:.{digits}f}%"
+    return f"{v * 100:.{digits}f}%" if _num(v) else "—"
 
 
 def _usd(v: Any) -> str:
-    if v is None:
+    if not _num(v):
         return "—"
     return f"{'−' if v < 0 else ''}${abs(v):,.2f}"
 
@@ -58,7 +63,8 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
 
     @app.middleware("http")
     async def auth(request: Request, call_next: Any) -> Response:
-        if password and request.url.path != "/healthz" and not _password_ok(request.headers.get("authorization"), password):
+        # Like Fifteen: anyone can view the dashboard; changing anything (every POST) needs the password.
+        if password and request.method not in SAFE_METHODS and not _password_ok(request.headers.get("authorization"), password):
             return Response("Authentication required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="tennis"'})
         return await call_next(request)
 

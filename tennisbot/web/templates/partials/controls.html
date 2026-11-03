@@ -12,6 +12,7 @@
       <span class="muted">Recording continues either way.</span>
     {% endif %}
   </div>
+  {% if editable %}<div class="muted" style="margin-bottom:10px">The buttons below ask for the dashboard password the first time.</div>{% endif %}
   {% if error %}<div class="bad">✕ {{ error }}</div>{% endif %}
   {% if notice %}<div class="good">✓ {{ notice }}</div>{% endif %}
   <details>
