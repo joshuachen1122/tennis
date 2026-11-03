@@ -57,8 +57,8 @@ def test_fees():
     assert taker_fee_cents(10, 90) == 7
 
 
-def snap(model_a, bid_a, ask_a, state=ScoreState(), fmt=MatchFormat()):
-    return Snapshot("EV", "KXATPMATCH", fmt, state, model_a, 0.05, bid_a, ask_a, 500.0, 100 - ask_a, 100 - bid_a, 500.0)
+def snap(model_a, bid_a, ask_a, state=ScoreState(), fmt=MatchFormat(), series="KXATPMATCH", calib="prematch", volume=50_000):
+    return Snapshot("EV", series, fmt, state, model_a, 0.05, bid_a, ask_a, 500.0, 100 - ask_a, 100 - bid_a, 500.0, calib=calib, volume=volume)
 
 
 def test_model_edge_buys_underpriced_side():
@@ -86,8 +86,20 @@ def test_sizing_and_exit():
     n = size_contracts(p, 100_000, 0.62, 54, 1000)
     assert 0 < n * 54 <= p.max_stake_usd * 100
     assert size_contracts(p, 100_000, 0.62, 54, 3) == 3
-    assert should_exit(p, 0.60, 59) == "converged"
-    assert should_exit(p, 0.60, 55) is None
+    assert should_exit(p, 0.60, 63) == "overshoot"  # sell only once the bid is 3c above the model
+    assert should_exit(p, 0.60, 61) is None  # mere convergence: hold (avoids a second taker fee)
+    assert should_exit(DEFAULT_PARAMS["closer"], 0.95, 99) is None  # closer always holds
+
+
+def test_model_strategies_skip_inplay_calibration_itf_men_and_thin_matches():
+    p = DEFAULT_PARAMS["model_edge"]
+    assert any(i.skip is None for i in evaluate("model_edge", p, snap(0.62, 53, 54)))
+    assert evaluate("model_edge", p, snap(0.62, 53, 54, calib="inplay")) == []
+    assert evaluate("model_edge", p, snap(0.62, 53, 54, series="KXITFMATCH")) == []
+    assert evaluate("model_edge", p, snap(0.62, 53, 54, volume=500)) == []
+    assert any(i.skip is None for i in evaluate("model_edge", p, snap(0.62, 53, 54, series="KXITFWMATCH")))
+    # closer still trades in-play-calibrated matches
+    assert any(i.skip is None for i in evaluate("closer", DEFAULT_PARAMS["closer"], snap(0.96, 91, 92, calib="inplay")))
 
 
 async def test_concurrent_evaluations_enter_once(tmp_path):
@@ -101,8 +113,9 @@ async def test_concurrent_evaluations_enter_once(tmp_path):
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     await db.init()
     eng = Engine(Settings(llm_shadow_reviews=False), db, client=None, llm=None)  # type: ignore[arg-type]
-    row = Match(event_ticker="EV", series="KXATPMATCH", market_a="MA", market_b="MB", comp_a=A, comp_b=B, pa0=0.66, pb0=0.62)
+    row = Match(event_ticker="EV", series="KXATPMATCH", market_a="MA", market_b="MB", comp_a=A, comp_b=B, pa0=0.66, pb0=0.62, calib_source="prematch")
     rt = MatchRT(row=row)
+    rt.volume = 50_000
     eng.matches["EV"] = rt
     rt.fmt = MatchFormat()
     b = board([2], [2], 15, 0)

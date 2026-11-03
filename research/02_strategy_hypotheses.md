@@ -61,3 +61,16 @@ Sizing is ¼-Kelly capped at $25 per trade and at the size showing at the ask.
 3. Markouts: are 10s/60s markouts negative? Negative means we're being picked off, i.e. the lag gate isn't enough.
 4. Is the closer edge real? Measure realized win rate against the ask in the 85–97¢ bucket.
 5. The serve-total prior (`SERVE_TOTALS`) by tier and surface. Fit it from settled matches.
+
+## Change log
+
+### 2026-11-03 (evening): v2 rules after the first 33 closed trades
+
+| Evidence (first ~4h, 33 closed trades) | Change |
+|---|---|
+| In-play-calibrated matches lost $35.39 over 23 trades; pre-match-calibrated lost $0.48 over 10 | `model_edge` and `late_close` only trade matches calibrated from the pre-match price (`require_prematch_calibration`) |
+| ITF men lost $50.84 over 12 trades; one W35 market had ~$20 of volume | `model_edge` and `late_close` exclude `KXITFMATCH`; all strategies need ≥ 10k contracts traded on the match (`min_match_volume`) |
+| Selling at convergence netted +$0.20 over 23 exits while `model_edge` paid $44 in fees (taker fee on both legs) | Hold to settlement. Sell early only if the bid overshoots the model by ≥ 3¢ (`exit_buffer`, exit reason `overshoot`) |
+| `closer` 4 of 4 wins, +$11.67 | Unchanged apart from the volume floor. Keep building the sample |
+
+All of these come from tiny samples. They are risk reductions, not proof of an edge.

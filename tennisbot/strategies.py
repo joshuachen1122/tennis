@@ -28,14 +28,22 @@ class StrategyParams:
     min_edge: float = 0.05  # model prob - ask, net of the per-contract taker fee
     min_price: int = 10  # cents; never buy below
     max_price: int = 90  # cents; never buy above
-    exit_on_convergence: bool = True  # sell when the bid reaches model - exit_buffer
-    exit_buffer: float = 0.01
+    # Early exit: sell only when the bid overshoots the model by `exit_buffer` (the edge has flipped
+    # to the other side), otherwise hold to settlement. Selling at mere convergence paid a second
+    # taker fee on every trade and netted +$0.20 over the first 23 model_edge exits.
+    exit_on_convergence: bool = True
+    exit_buffer: float = 0.03
     stop_edge: Optional[float] = None  # sell if model - bid falls below -stop_edge (None = hold)
     kelly_fraction: float = 0.25
     max_stake_usd: float = 25.0
     max_entries_per_match: int = 3
     # extra state filters (strategy-specific meaning)
     min_side_prob: float = 0.0
+    # Only trade matches whose serve strengths came from the pre-match price. Matches joined mid-way
+    # are calibrated by inverting a live price, which lost $35 over the first 23 trades.
+    require_prematch_calibration: bool = False
+    exclude_series: list[str] = field(default_factory=list)  # e.g. ITF men lost $51 over the first 12
+    min_match_volume: float = 0.0  # contracts traded on the match so far (both players)
     deciding_set_only: bool = False
     min_games_each: int = 0  # both players have at least this many games in the current set (or tiebreak)
 
@@ -43,14 +51,16 @@ class StrategyParams:
 DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Primary hypothesis: the Markov model calibrated to the pre-match price, updated with
     # observed serve points, finds in-play prices that drift from fair between points.
-    "model_edge": StrategyParams(min_edge=0.05, min_price=10, max_price=90),
+    "model_edge": StrategyParams(min_edge=0.05, min_price=10, max_price=90, require_prematch_calibration=True,
+                                 exclude_series=["KXITFMATCH"], min_match_volume=10_000),
     # The user's hypothesis: late, close deciding sets swing hardest on each point, so mispricing
     # there should be largest. Same model, restricted to 4-4 or later in the deciding set.
-    "late_close": StrategyParams(min_edge=0.03, min_price=15, max_price=85, deciding_set_only=True, min_games_each=4),
+    "late_close": StrategyParams(min_edge=0.03, min_price=15, max_price=85, deciding_set_only=True, min_games_each=4,
+                                 require_prematch_calibration=True, exclude_series=["KXITFMATCH"], min_match_volume=10_000),
     # Favorite-longshot test: near-certain leaders are underpriced when retail buys comebacks.
     # Fees are tiny at the extremes. Hold to settlement.
     "closer": StrategyParams(min_edge=0.025, min_price=60, max_price=97, min_side_prob=0.90, exit_on_convergence=False,
-                             max_entries_per_match=2),
+                             max_entries_per_match=2, min_match_volume=10_000),
 }
 
 
@@ -70,6 +80,8 @@ class Snapshot:
     bid_b: Optional[int]
     ask_b: Optional[int]
     ask_b_size: float
+    calib: str = ""  # "prematch" | "inplay"
+    volume: float = 0.0
 
 
 @dataclass
@@ -101,6 +113,10 @@ def evaluate(name: str, params: StrategyParams, s: Snapshot) -> list[Intent]:
         return []
     out: list[Intent] = []
     st = s.state
+    if params.require_prematch_calibration and s.calib != "prematch":
+        return []
+    if s.series in params.exclude_series or s.volume < params.min_match_volume:
+        return []
     if params.deciding_set_only and not st.is_deciding(s.fmt):
         return []
     if params.min_games_each and not st.in_tiebreak(s.fmt) and min(st.games_a, st.games_b) < params.min_games_each:
@@ -139,8 +155,8 @@ def size_contracts(params: StrategyParams, bankroll_cents: float, model_p: float
 def should_exit(params: StrategyParams, model_p: float, bid: Optional[int]) -> Optional[str]:
     if bid is None or bid <= 0:
         return None
-    if params.exit_on_convergence and bid / 100.0 >= model_p - params.exit_buffer:
-        return "converged"
+    if params.exit_on_convergence and bid / 100.0 >= model_p + params.exit_buffer:
+        return "overshoot"
     if params.stop_edge is not None and model_p - bid / 100.0 < -params.stop_edge:
         return "stop"
     return None

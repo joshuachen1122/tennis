@@ -652,7 +652,8 @@ class Engine:
         row = rt.row
         bid_a, _, ask_a, asz_a = self._bbo(row.market_a)
         bid_b, _, ask_b, asz_b = self._bbo(row.market_b)
-        snap = Snapshot(row.event_ticker, row.series, rt.fmt, rt.state, rt.model_a, rt.lev or 0.0, bid_a, ask_a, asz_a, bid_b, ask_b, asz_b)  # type: ignore[arg-type]
+        snap = Snapshot(row.event_ticker, row.series, rt.fmt, rt.state, rt.model_a, rt.lev or 0.0, bid_a, ask_a, asz_a, bid_b, ask_b, asz_b,  # type: ignore[arg-type]
+                        calib=row.calib_source or "", volume=rt.volume or 0.0)
         for name, params in self.params.items():
             for intent in evaluate(name, params, snap):
                 ticker = row.market_a if intent.side == "a" else row.market_b
