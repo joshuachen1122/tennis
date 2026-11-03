@@ -40,6 +40,7 @@
       --line-a: #408fff; --line-b: #ff8a3d;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }  /* component display rules must not override the filters */
     html, body { margin: 0; background: var(--k-surface); color: var(--k-text-1); }
     body { font: 15px/1.45 Inter, system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
     a { color: inherit; text-decoration: none; }
