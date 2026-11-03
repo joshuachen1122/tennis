@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1>Tennis Agent</h1>
+  <span class="sub">Kalshi tennis · paper trading · Markov model vs market</span>
+</header>
+<main>
+  {% include "partials/controls.html" %}
+  {% include "partials/stats.html" %}
+  {% include "partials/live.html" %}
+  {% include "partials/trades.html" %}
+  {% include "partials/review.html" %}
+  {% include "partials/data.html" %}
+</main>
+{% endblock %}

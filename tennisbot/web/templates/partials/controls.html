@@ -1,0 +1,26 @@
+<section id="controls" class="panel wide">
+  <h2>Controls</h2>
+  <div class="toolbar">
+    <span class="pill warn">PAPER · simulated taker fills at the live ask/bid · no real orders</span>
+    {% if controls.agent_enabled %}<span class="pill good">● trading</span>{% else %}<span class="pill bad">■ stopped</span>{% endif %}
+    {% if editable %}
+      {% if controls.agent_enabled %}
+        <button class="danger" hx-post="/controls/agent" hx-vals='{"action":"stop"}' hx-target="#controls" hx-swap="outerHTML">■ Stop paper trading</button>
+      {% else %}
+        <button hx-post="/controls/agent" hx-vals='{"action":"resume"}' hx-target="#controls" hx-swap="outerHTML">▶ Resume</button>
+      {% endif %}
+      <span class="muted">Recording continues either way.</span>
+    {% endif %}
+  </div>
+  {% if error %}<div class="bad">✕ {{ error }}</div>{% endif %}
+  {% if notice %}<div class="good">✓ {{ notice }}</div>{% endif %}
+  <details>
+    <summary>Strategy parameters</summary>
+    {% if editable %}
+    <form hx-post="/controls/params" hx-target="#controls" hx-swap="outerHTML">
+      <textarea name="params">{{ controls.params | tojson(indent=2) }}</textarea>
+      <button type="submit" class="ghost">Save parameters</button>
+    </form>
+    {% else %}<pre>{{ controls.params | tojson(indent=2) }}</pre>{% endif %}
+  </details>
+</section>

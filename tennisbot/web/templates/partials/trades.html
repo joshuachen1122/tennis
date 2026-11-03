@@ -1,0 +1,30 @@
+<section id="trades" class="panel wide" hx-get="/partials/trades" hx-trigger="every 10s" hx-swap="outerHTML">
+  <h2>Recent paper trades</h2>
+  {% if not stats or not stats.recent %}
+    <div class="empty">No paper trades yet.</div>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th class="l">Opened (UTC)</th><th class="l">Strategy</th><th class="l">Bought</th><th class="l">Score at entry</th><th>Qty</th><th>Entry</th><th>Model</th><th>Edge</th><th>+10s</th><th>+60s</th><th>Exit</th><th class="l">Reason</th><th>PnL</th><th class="l">LLM</th></tr></thead>
+    <tbody>
+    {% for t in stats.recent %}
+      <tr>
+        <td class="l">{{ t.opened_at.strftime("%m-%d %H:%M:%S") }}</td>
+        <td class="l">{{ t.strategy }}</td>
+        <td class="l"><a href="/match/{{ t.event_ticker }}">{{ t.player }}</a> <span class="muted">{{ t.series.replace("KX","").replace("MATCH","") }}</span></td>
+        <td class="l muted">{{ t.score }}</td>
+        <td>{{ "%g" | format(t.count) }}</td>
+        <td>{{ t.entry_price | cents }}</td>
+        <td>{{ "%.1f" | format(t.model_p * 100) }}</td>
+        <td>{{ t.edge | pct }}</td>
+        <td>{{ t.mark_10s | cents }}</td>
+        <td>{{ t.mark_60s | cents }}</td>
+        <td>{{ t.exit_price | cents }}</td>
+        <td class="l muted">{{ t.exit_reason or "open" }}</td>
+        <td class="{{ 'good' if t.pnl and t.pnl > 0 else ('bad' if t.pnl and t.pnl < 0 else '') }}">{% if t.pnl is not none %}{{ (t.pnl / 100) | usd }}{% else %}—{% endif %}</td>
+        <td class="l">{% if t.llm_verdict %}<span title="{{ t.llm_verdict.reasoning }}">{{ "take" if t.llm_verdict.take else "skip" }} {{ "%.0f" | format(t.llm_verdict.probability * 100) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>

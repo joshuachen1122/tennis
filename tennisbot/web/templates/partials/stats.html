@@ -1,0 +1,23 @@
+<section id="stats" class="panel wide" hx-get="/partials/stats" hx-trigger="every 10s" hx-swap="outerHTML">
+  <h2>Paper performance by strategy</h2>
+  {% if not stats or not stats.strategies %}
+    <div class="empty">Collecting stats…</div>
+  {% else %}
+  {% for name, st in stats.strategies.items() %}
+  <div class="strategy">
+    <h3>{{ name }} {% if not st.enabled %}<span class="pill muted">disabled</span>{% endif %}</h3>
+    <div class="tiles">
+      <div class="tile"><div class="label">PnL (net of fees)</div><div class="value {{ 'good' if st.pnl_usd > 0 else ('bad' if st.pnl_usd < 0 else '') }}">{{ st.pnl_usd | usd }}</div></div>
+      <div class="tile"><div class="label">Equity</div><div class="value">{{ st.equity_usd | usd }}</div></div>
+      <div class="tile"><div class="label">Trades</div><div class="value">{{ st.trades }}</div><div class="muted">{{ st.open }} open</div></div>
+      <div class="tile"><div class="label">Win rate</div><div class="value">{{ st.win_rate | pct }}</div><div class="muted">{{ st.wins }}/{{ st.closed }}</div></div>
+      <div class="tile"><div class="label">ROI on staked</div><div class="value">{{ st.roi | pct }}</div><div class="muted">{{ st.staked_usd | usd }} staked</div></div>
+      <div class="tile"><div class="label">Model-expected PnL</div><div class="value">{{ st.model_expected_pnl_usd | usd }}</div><div class="muted">avg edge {{ st.avg_edge | pct }}</div></div>
+      <div class="tile"><div class="label">Markout 10s / 60s</div><div class="value">{% if st.avg_markout_10s_c is not none %}{{ "%+.1f"|format(st.avg_markout_10s_c) }}{% else %}—{% endif %} / {% if st.avg_markout_60s_c is not none %}{{ "%+.1f"|format(st.avg_markout_60s_c) }}{% else %}—{% endif %}¢</div><div class="muted">bid after entry − entry</div></div>
+      <div class="tile"><div class="label">Fees</div><div class="value">{{ st.fees_usd | usd }}</div></div>
+      <div class="tile"><div class="label">LLM shadow</div><div class="value">{{ st.llm_reviewed }}</div><div class="muted">take {{ st.llm_take_pnl_usd | usd }} · skip {{ st.llm_skip_pnl_usd | usd }}</div></div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</section>

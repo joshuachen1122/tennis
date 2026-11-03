@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Tennis Agent{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #f7f6f2; --surface: #ffffff; --text: #1d1d1b; --text-2: #55544f; --muted: #85837c;
+      --grid: #e6e4dd; --border: rgba(0,0,0,.10); --accent: #2f6fd6; --model: #c2410c;
+      --good: #138a36; --bad: #c62828; --warn: #b7791f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --page: #0e0e0d; --surface: #1a1a19; --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+        --grid: #2c2c2a; --border: rgba(255,255,255,.10); --accent: #5b9bf0; --model: #f08a4b;
+        --good: #2fbf5b; --bad: #ef5350; --warn: #fab219;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    header { display: flex; align-items: baseline; gap: 14px; padding: 18px 24px 4px; flex-wrap: wrap; }
+    header h1 { font-size: 18px; margin: 0; }
+    header .sub { color: var(--muted); }
+    main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr)); gap: 16px; padding: 12px 24px 32px; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+    .panel.wide { grid-column: 1 / -1; }
+    .panel h2 { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); margin: 0 0 10px; }
+    .muted { color: var(--muted); } .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+    .tile { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+    .tile .label { color: var(--muted); font-size: 12px; } .tile .value { font-size: 20px; font-weight: 600; }
+    .strategy { margin-bottom: 14px; } .strategy h3 { font-size: 14px; margin: 0 0 6px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { text-align: right; padding: 5px 7px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+    th:first-child, td:first-child, td.l, th.l { text-align: left; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+    .serve::before { content: "●"; color: var(--good); margin-right: 3px; font-size: 10px; }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 7px; padding: 7px 12px; font: inherit; font-weight: 600; cursor: pointer; }
+    button.danger { background: var(--bad); } button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    textarea { width: 100%; min-height: 220px; background: var(--page); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font: 12px ui-monospace, monospace; padding: 8px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+    details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 8px; }
+    ul.notes { margin: 6px 0; padding-left: 18px; } ul.notes li { margin-bottom: 4px; }
+    .viz { width: 100%; height: auto; }
+    .viz .grid { stroke: var(--grid); } .viz .tick { fill: var(--muted); font-size: 11px; }
+    .viz .series-mid { fill: none; stroke: var(--accent); stroke-width: 2; }
+    .viz .series-model { fill: none; stroke: var(--model); stroke-width: 2; stroke-dasharray: 5 3; }
+    .viz .entry { fill: var(--good); stroke: var(--surface); stroke-width: 2; }
+    .legend span { margin-right: 14px; font-size: 12px; } .sw { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+    @media (max-width: 640px) { header { padding: 12px 16px 2px; } main { padding: 8px 16px 24px; gap: 12px; } .tile .value { font-size: 17px; } }
+  </style>
+</head>
+<body>
+  {% block body %}{% endblock %}
+</body>
+</html>

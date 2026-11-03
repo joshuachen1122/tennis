@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ m.title if m else "Match" }}{% endblock %}
+{% block body %}
+<header>
+  <h1><a href="/">←</a> {{ m.player_a }} vs {{ m.player_b }}</h1>
+  <span class="sub">{{ m.tournament }} · {{ m.round }} · {{ m.fmt }} · {{ m.status }}{% if m.final_score %} · {{ m.final_score }}{% endif %}</span>
+</header>
+<main>
+  <section class="panel wide">
+    <h2>Price of {{ m.player_a }} — market vs model</h2>
+    <div class="legend"><span><i class="sw" style="background:var(--accent)"></i>Market mid</span><span><i class="sw" style="background:var(--model)"></i>Model</span><span><i class="sw" style="background:var(--good);height:8px;width:8px;border-radius:50%"></i>Paper entries</span></div>
+    {{ chart | safe }}
+    <div class="muted">Pre-match mid {{ m.prematch_mid_a | cents }}¢ · calibration {{ m.calib_source or "—" }} · serve-point priors A {{ m.pa0 }} / B {{ m.pb0 }}{% if m.result_a is not none %} · settled A = {{ m.result_a }}{% endif %}</div>
+  </section>
+  <section class="panel wide">
+    <h2>Paper trades</h2>
+    {% if not trades %}<div class="empty">None on this match.</div>{% else %}
+    <div class="table-wrap"><table><thead><tr><th class="l">Strategy</th><th class="l">Bought</th><th class="l">Score</th><th>Qty</th><th>Entry</th><th>Model</th><th>Exit</th><th class="l">Reason</th><th>PnL</th></tr></thead><tbody>
+    {% for t in trades %}<tr><td class="l">{{ t.strategy }}</td><td class="l">{{ t.player }}</td><td class="l muted">{{ t.score }}</td><td>{{ "%g"|format(t.count) }}</td><td>{{ t.entry_price | cents }}</td><td>{{ "%.1f"|format(t.model_p*100) }}</td><td>{{ t.exit_price | cents }}</td><td class="l">{{ t.exit_reason or "open" }}</td><td>{% if t.pnl is not none %}{{ (t.pnl/100) | usd }}{% else %}—{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>{% endif %}
+  </section>
+  <section class="panel wide">
+    <h2>Score log (latest first)</h2>
+    <div class="table-wrap"><table><thead><tr><th class="l">Time (UTC)</th><th class="l">Sets</th><th>Pts</th><th>Server</th><th>Bid/Ask A</th><th>Model A</th><th>Pt won by</th></tr></thead><tbody>
+    {% for s in scores %}<tr><td class="l">{{ s.ts.strftime("%H:%M:%S") }}</td><td class="l">{{ s.set_scores }}</td><td>{{ s.points_a }}-{{ s.points_b }}</td><td>{{ "A" if s.a_serving else ("B" if s.a_serving == false else "—") }}</td><td>{{ s.bid_a | cents }}/{{ s.ask_a | cents }}</td><td>{% if s.model_a is not none %}{{ "%.1f"|format(s.model_a*100) }}{% else %}—{% endif %}</td><td>{{ {1: "A", 2: "B"}.get(s.point_winner, "") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</main>
+{% endblock %}

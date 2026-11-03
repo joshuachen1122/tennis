@@ -1,0 +1,42 @@
+# Fly.io config for the tennis paper-trading agent (separate app from Fifteen's btc-15m-kalshi-agent).
+#   fly apps create tennis-kalshi-agent
+#   fly volumes create tennis_data --region iad --size 5 -a tennis-kalshi-agent
+#   secrets: ANTHROPIC_API_KEY, KALSHI_KEY_ID, KALSHI_PRIVATE_KEY, DASHBOARD_PASSWORD (same values as Fifteen)
+#   fly deploy
+app = "tennis-kalshi-agent"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATABASE_URL = "sqlite+aiosqlite:////data/tennis.db"
+  PORT = "8080"
+  LOG_LEVEL = "INFO"
+  LLM_MODEL = "claude-opus-5-5"
+  LLM_DAILY_BUDGET_USD = "3.0"
+
+# SQLite lives on the volume: exactly one machine, never auto-stopped.
+[mounts]
+  source = "tennis_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

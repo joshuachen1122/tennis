@@ -1,0 +1,29 @@
+<section id="live" class="panel wide" hx-get="/partials/live" hx-trigger="every 3s" hx-swap="outerHTML">
+  <h2>Live matches · {{ live | length }}</h2>
+  {% if not live %}
+    <div class="empty">No live matches right now. Tracking {{ health.tracked or 0 }} upcoming.</div>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th class="l">Match</th><th class="l">Score</th><th>Pts</th><th>Bid/Ask A</th><th>Model A</th><th>Edge A</th><th>Edge B</th><th>Leverage</th><th class="l">Status</th><th class="l">Positions</th></tr></thead>
+    <tbody>
+    {% for r in live %}
+      <tr>
+        <td class="l"><a href="/match/{{ r.event }}">
+          <span class="{{ 'serve' if r.a_serving else '' }}">{{ r.player_a }}</span> vs <span class="{{ 'serve' if r.a_serving == false else '' }}">{{ r.player_b }}</span></a>
+          <div class="muted">{{ r.series }} · {{ r.tournament }}</div></td>
+        <td class="l">{% for a, b in r.sets %}{{ a }}-{{ b }} {% endfor %}</td>
+        <td>{{ r.points }}</td>
+        <td>{{ r.bid_a | cents }} / {{ r.ask_a | cents }}</td>
+        <td>{% if r.model_a is not none %}{{ "%.1f" | format(r.model_a * 100) }}{% else %}—{% endif %}</td>
+        <td class="{{ 'good' if r.edge_a and r.edge_a > 0.03 else '' }}">{{ r.edge_a | pct }}</td>
+        <td class="{{ 'good' if r.edge_b and r.edge_b > 0.03 else '' }}">{{ r.edge_b | pct }}</td>
+        <td>{% if r.lev is not none %}{{ "%.1f" | format(r.lev * 100) }}¢{% else %}—{% endif %}</td>
+        <td class="l muted">{{ r.gate | replace("_", " ") }}{% if r.calib %} · {{ r.calib }}{% endif %}</td>
+        <td class="l">{{ r.positions | join(", ") }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="muted" style="margin-top:6px">Model A = Markov win probability for the first-listed player. Edge = model − ask. Leverage = price swing on the next point. Status shows why a match is not tradeable right now.</div>
+  {% endif %}
+</section>
