@@ -1,6 +1,6 @@
 from tennisbot.model.live import infer_format, parse_board, point_winner, to_state
 from tennisbot.model.markov import MatchFormat, ScoreState
-from tennisbot.strategies import DEFAULT_PARAMS, Snapshot, evaluate, net_edge, should_exit, size_contracts, taker_fee_cents
+from tennisbot.strategies import DEFAULT_PARAMS, Snapshot, blend, evaluate, net_edge, should_exit, size_contracts, taker_fee_cents
 
 A, B = "comp-a", "comp-b"
 
@@ -62,10 +62,19 @@ def snap(model_a, bid_a, ask_a, state=ScoreState(), fmt=MatchFormat(), series="K
 
 
 def test_model_edge_buys_underpriced_side():
-    out = evaluate("model_edge", DEFAULT_PARAMS["model_edge"], snap(0.62, 53, 54))
+    out = evaluate("model_edge", DEFAULT_PARAMS["model_edge"], snap(0.66, 53, 54))
     trades = [i for i in out if i.skip is None]
-    assert len(trades) == 1 and trades[0].side == "a" and trades[0].edge > 0.05
+    assert len(trades) == 1 and trades[0].side == "a" and trades[0].edge > 0.03
+    assert trades[0].extra["raw_model_p"] == 0.66 and abs(trades[0].model_p - 0.5975) < 1e-9  # half model, half mid
     assert net_edge(0.62, 54) < 0.62 - 0.54
+
+
+def test_blend_shrinks_toward_mid():
+    assert blend(0.80, 70, 72, 0.5) == 0.755
+    assert blend(0.80, 70, 72, 1.0) == 0.80
+    assert blend(0.80, None, 72, 0.5) == 0.80  # no two-sided quote: raw model
+    # a raw 6c edge that cleared v2's 5c bar is now only ~1.3c net: no trade
+    assert all(i.skip for i in evaluate("model_edge", DEFAULT_PARAMS["model_edge"], snap(0.60, 53, 54)))
 
 
 def test_late_close_only_in_tight_deciding_set():
@@ -93,17 +102,34 @@ def test_sizing_and_exit():
 
 def test_model_strategies_skip_inplay_calibration_itf_men_and_thin_matches():
     p = DEFAULT_PARAMS["model_edge"]
-    assert any(i.skip is None for i in evaluate("model_edge", p, snap(0.62, 53, 54)))
-    assert evaluate("model_edge", p, snap(0.62, 53, 54, calib="inplay")) == []
-    assert evaluate("model_edge", p, snap(0.62, 53, 54, series="KXITFMATCH")) == []
-    assert evaluate("model_edge", p, snap(0.62, 53, 54, volume=500)) == []
-    assert any(i.skip is None for i in evaluate("model_edge", p, snap(0.62, 53, 54, series="KXITFWMATCH")))
+    assert any(i.skip is None for i in evaluate("model_edge", p, snap(0.66, 53, 54)))
+    assert evaluate("model_edge", p, snap(0.66, 53, 54, calib="inplay")) == []
+    assert evaluate("model_edge", p, snap(0.66, 53, 54, series="KXITFMATCH")) == []
+    assert evaluate("model_edge", p, snap(0.66, 53, 54, volume=500)) == []
+    assert any(i.skip is None for i in evaluate("model_edge", p, snap(0.66, 53, 54, series="KXITFWMATCH")))
     # closer still trades in-play-calibrated matches
     assert any(i.skip is None for i in evaluate("closer", DEFAULT_PARAMS["closer"], snap(0.96, 91, 92, calib="inplay")))
 
 
-async def test_concurrent_evaluations_enter_once(tmp_path):
-    import asyncio
+class FakeLLM:
+    """Stands in for the Claude reviewer: fixed verdict after a short delay, counts calls."""
+
+    def __init__(self, take: bool, delay: float = 0.05):
+        self.take, self.delay, self.calls = take, delay, 0
+
+    async def review_trade(self, ctx, proposed=False):
+        from tennisbot.llm import TradeVerdict, Usage
+
+        import asyncio
+
+        self.calls += 1
+        await asyncio.sleep(self.delay)
+        return TradeVerdict(take=self.take, probability=0.5, confidence=0.5, reasoning="test", risk_flags=[]), Usage("fake", 0.01), "ok"
+
+
+async def _engine_with_edge(tmp_path, llm=None, edge_cents=12):
+    """An engine with one live, quiet, pre-match-calibrated match whose player A is priced
+    `edge_cents` below the model."""
     import time as _t
 
     from tennisbot.db import Database, Match
@@ -112,22 +138,87 @@ async def test_concurrent_evaluations_enter_once(tmp_path):
 
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     await db.init()
-    eng = Engine(Settings(llm_shadow_reviews=False), db, client=None, llm=None)  # type: ignore[arg-type]
+    eng = Engine(Settings(llm_shadow_reviews=False), db, client=None, llm=llm)  # type: ignore[arg-type]
     row = Match(event_ticker="EV", series="KXATPMATCH", market_a="MA", market_b="MB", comp_a=A, comp_b=B, pa0=0.66, pb0=0.62, calib_source="prematch")
     rt = MatchRT(row=row)
     rt.volume = 50_000
     eng.matches["EV"] = rt
     rt.fmt = MatchFormat()
-    b = board([2], [2], 15, 0)
-    rt.board, rt.board_changed_at, rt.last_poll_ok = b, _t.time() - 10, _t.time()
+    rt.board, rt.board_changed_at, rt.last_poll_ok = board([2], [2], 15, 0), _t.time() - 10, _t.time()
     eng._reprice(rt)
-    p = rt.model_a
-    ask = int(p * 100) - 8
+    ask = int(rt.model_a * 100) - edge_cents
     for t, yes, no in (("MA", ask - 1, 100 - ask), ("MB", 100 - ask - 1, ask)):
-        bk = Book(t, {yes: 500.0}, {no: 500.0}, _t.time())
-        eng.rest_books[t] = bk
+        eng.rest_books[t] = Book(t, {yes: 500.0}, {no: 500.0}, _t.time())
     rt.ref_mid = rt.since_lo = rt.since_hi = ask - 0.5
+    return eng, rt, db
+
+
+async def test_concurrent_evaluations_enter_once(tmp_path):
+    """Five overlapping evaluations while the LLM gate is thinking: one review, one position."""
+    import asyncio
+    import time as _t
+
+    llm = FakeLLM(take=True)
+    eng, rt, db = await _engine_with_edge(tmp_path, llm)
     await asyncio.gather(*(eng._evaluate(rt, _t.time()) for _ in range(5)))
-    opened = [t for t in eng.open_trades.values() if t.strategy == "model_edge"]
-    assert len(opened) == 1
+    await asyncio.sleep(0.2)
+    for _ in range(3):  # later ticks must not add a second strategy on the same match
+        await eng._evaluate(rt, _t.time())
+    await asyncio.sleep(0.2)
+    assert llm.calls == 1
+    assert len(eng.open_trades) == 1
+    (t,) = eng.open_trades.values()
+    assert t.strategy == "model_edge" and t.llm_verdict["take"] and t.context["params_version"] == 3
+    await db.dispose()
+
+
+async def test_llm_gate_fails_closed_and_skip_blocks(tmp_path):
+    import asyncio
+    import time as _t
+
+    from sqlalchemy import select
+
+    from tennisbot.db import LLMNote
+
+    eng, rt, db = await _engine_with_edge(tmp_path, llm=None)
+    await eng._evaluate(rt, _t.time())
+    assert not eng.open_trades  # no LLM: gated strategies do not trade
+    await db.dispose()
+
+    (tmp_path / "x").mkdir()
+    llm = FakeLLM(take=False)
+    eng, rt, db = await _engine_with_edge(tmp_path / "x", llm)
+    await eng._evaluate(rt, _t.time())
+    await asyncio.sleep(0.2)
+    await eng._evaluate(rt, _t.time())
+    await asyncio.sleep(0.2)
+    assert not eng.open_trades and llm.calls == 1  # the skip starts a cooldown
+    async with db.session() as s:
+        notes = (await s.execute(select(LLMNote).where(LLMNote.kind == "gate"))).scalars().all()
+    assert len(notes) == 1 and notes[0].body["outcome"] == "skip" and notes[0].body["ask"] > 0
+    await db.dispose()
+
+
+async def test_budget_boost_expires(tmp_path):
+    from datetime import timedelta
+
+    from tennisbot.db import utcnow
+
+    eng, _, db = await _engine_with_edge(tmp_path)
+    eng.s.llm_boost_daily_usd, eng.s.llm_boost_until = 5.0, utcnow() + timedelta(hours=1)
+    assert eng.llm_budget() == 5.0
+    eng.s.llm_boost_until = utcnow() - timedelta(minutes=1)
+    assert eng.llm_budget() == eng.s.llm_daily_budget_usd
+    await db.dispose()
+
+
+async def test_one_position_per_match_across_strategies(tmp_path):
+    import time as _t
+
+    from tennisbot.db import PaperTrade
+
+    eng, rt, db = await _engine_with_edge(tmp_path)
+    eng.open_trades[1] = PaperTrade(id=1, strategy="model_edge", event_ticker="EV", ticker="MA", count=1, entry_price=50)
+    assert eng._position_block(rt, "closer", DEFAULT_PARAMS["closer"], _t.time()) == "match_held"
+    assert eng._position_block(rt, "model_edge", DEFAULT_PARAMS["model_edge"], _t.time()) == "already_open"
     await db.dispose()

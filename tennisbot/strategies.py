@@ -4,7 +4,11 @@ against recorded data in research.
 Every strategy is a taker that buys YES on one player's market. Shared guard rails (in the
 engine): only while the live board is fresh, only after both the score and the price have been
 quiet for a few seconds (so we are pricing *between* points, not racing faster feeds), one open
-position per strategy per match, and a cap on entries per match.
+position per match across all strategies, and a cap on entries per match.
+
+v3 (2026-11-04): the raw model ran ~7c above the market on the players it bought and lost to it on
+accuracy (52 resolved trades, research/04), so strategies trade on a blend of model and market
+(`model_weight`), and `model_edge` / `late_close` only enter when the LLM reviewer agrees.
 """
 
 from __future__ import annotations
@@ -45,20 +49,29 @@ class StrategyParams:
     exclude_series: list[str] = field(default_factory=list)  # e.g. ITF men lost $51 over the first 12
     min_match_volume: float = 0.0  # contracts traded on the match so far (both players)
     deciding_set_only: bool = False
+    # Price on market_mid + model_weight * (model - market_mid). 1.0 = raw model, 0.0 = the market.
+    model_weight: float = 1.0
+    # Enter only after the LLM reviewer says take (fails closed when the LLM is off or out of budget).
+    llm_gate: bool = False
     min_games_each: int = 0  # both players have at least this many games in the current set (or tiebreak)
 
+
+PARAMS_VERSION = 3  # bump to replace parameters saved from the dashboard with these defaults
 
 DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Primary hypothesis: the Markov model calibrated to the pre-match price, updated with
     # observed serve points, finds in-play prices that drift from fair between points.
-    "model_edge": StrategyParams(min_edge=0.05, min_price=10, max_price=90, require_prematch_calibration=True,
-                                 exclude_series=["KXITFMATCH"], min_match_volume=10_000),
+    # v3: half-weight the model against the market (a 3c blended edge = 6c raw) and gate on the LLM.
+    "model_edge": StrategyParams(min_edge=0.03, min_price=10, max_price=90, require_prematch_calibration=True,
+                                 exclude_series=["KXITFMATCH"], min_match_volume=10_000, model_weight=0.5, llm_gate=True),
     # The user's hypothesis: late, close deciding sets swing hardest on each point, so mispricing
     # there should be largest. Same model, restricted to 4-4 or later in the deciding set.
-    "late_close": StrategyParams(min_edge=0.03, min_price=15, max_price=85, deciding_set_only=True, min_games_each=4,
-                                 require_prematch_calibration=True, exclude_series=["KXITFMATCH"], min_match_volume=10_000),
+    "late_close": StrategyParams(min_edge=0.02, min_price=15, max_price=85, deciding_set_only=True, min_games_each=4,
+                                 require_prematch_calibration=True, exclude_series=["KXITFMATCH"], min_match_volume=10_000,
+                                 model_weight=0.5, llm_gate=True),
     # Favorite-longshot test: near-certain leaders are underpriced when retail buys comebacks.
-    # Fees are tiny at the extremes. Hold to settlement.
+    # Fees are tiny at the extremes. Hold to settlement. The model matched the market above 85c,
+    # so it keeps the raw model; the LLM still reviews it in shadow.
     "closer": StrategyParams(min_edge=0.025, min_price=60, max_price=97, min_side_prob=0.90, exit_on_convergence=False,
                              max_entries_per_match=2, min_match_volume=10_000),
 }
@@ -97,10 +110,18 @@ class Intent:
     extra: dict = field(default_factory=dict)
 
 
-def _side_quotes(s: Snapshot, side: str) -> tuple[Optional[int], float, float]:
+def blend(model_p: float, bid: Optional[int], ask: Optional[int], weight: float) -> float:
+    """Shrink the model toward the market mid. Without a two-sided quote, return the raw model."""
+    if weight >= 1.0 or bid is None or ask is None or bid <= 0 or ask >= 100:
+        return model_p
+    mid = (bid + ask) / 200.0
+    return mid + weight * (model_p - mid)
+
+
+def _side_quotes(s: Snapshot, side: str) -> tuple[Optional[int], Optional[int], float, float]:
     if side == "a":
-        return s.ask_a, s.ask_a_size, s.model_a
-    return s.ask_b, s.ask_b_size, 1.0 - s.model_a
+        return s.bid_a, s.ask_a, s.ask_a_size, s.model_a
+    return s.bid_b, s.ask_b, s.ask_b_size, 1.0 - s.model_a
 
 
 def net_edge(model_p: float, ask: int) -> float:
@@ -122,14 +143,15 @@ def evaluate(name: str, params: StrategyParams, s: Snapshot) -> list[Intent]:
     if params.min_games_each and not st.in_tiebreak(s.fmt) and min(st.games_a, st.games_b) < params.min_games_each:
         return []
     for side in ("a", "b"):
-        ask, size, p = _side_quotes(s, side)
+        bid, ask, size, raw = _side_quotes(s, side)
         if ask is None or ask <= 0 or ask >= 100:
             continue
+        p = blend(raw, bid, ask, params.model_weight)
         edge = net_edge(p, ask)
         if edge < params.min_edge * 0.6:
             continue
-        intent = Intent(name, side, ask, size, p, edge)
-        if p < params.min_side_prob:
+        intent = Intent(name, side, ask, size, p, edge, extra={"raw_model_p": raw})
+        if raw < params.min_side_prob:
             intent.skip = "side_prob_below_min"
         elif ask < params.min_price:
             intent.skip = "price_below_min"

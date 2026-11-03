@@ -11,7 +11,11 @@ reuse its patterns.
 - `tennisbot/engine.py`: all runtime loops and paper execution. Kalshi's score feed lags the market
   by ~13s (median), so trading must stay gated on `board_behind_market` / quiet windows.
   See `research/02_strategy_hypotheses.md`.
-- `tennisbot/strategies.py`: pure strategy logic (replayable on recorded data).
+- `tennisbot/strategies.py`: pure strategy logic (replayable on recorded data). Bump `PARAMS_VERSION`
+  when defaults change, or parameters saved from the dashboard override them.
+- One open position per match across all strategies. `model_edge` / `late_close` are LLM-gated
+  (fail closed); gate verdicts are `llm_notes` rows with kind="gate". Score them with
+  `scripts/gate_report.py`.
 - Paper only: there is no order-placement code. Adding live trading needs explicit user approval,
   spend caps and a kill switch, as in Fifteen.
 - Research tables are append-only. Export them via `/api/export/{table}`.

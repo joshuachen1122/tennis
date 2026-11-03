@@ -20,6 +20,9 @@ swap_size_mb = 512
   LOG_LEVEL = "INFO"
   LLM_MODEL = "claude-opus-5-5"
   LLM_DAILY_BUDGET_USD = "1.0"
+  # 24h LLM-gate experiment (research/04): $5/day cap until this time, then back to $1/day.
+  LLM_BOOST_DAILY_USD = "5.0"
+  LLM_BOOST_UNTIL = "2026-11-05T00:15:00Z"
 
 # SQLite lives on the volume: exactly one machine, never auto-stopped.
 [mounts]

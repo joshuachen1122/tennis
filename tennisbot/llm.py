@@ -1,8 +1,8 @@
-"""Claude in two roles, both advisory (neither places or blocks paper trades):
+"""Claude in two roles:
 
-* **Shadow reviewer** - after each paper entry, gives a take/skip verdict with its own probability.
-  Verdicts are stored on the trade and scored once it settles, so we learn whether the LLM adds
-  signal before ever letting it gate anything.
+* **Trade reviewer** - gives a take/skip verdict with its own probability. For strategies with
+  `llm_gate` it is asked *before* entry and a skip blocks the paper trade; for the others it
+  reviews after entry in shadow. Verdicts are stored and scored once the match settles.
 * **Strategy analyst** - every few hours, reads the aggregated paper results and recorded-data
   diagnostics and proposes parameter changes and new hypotheses (shown on the dashboard).
 
@@ -65,7 +65,7 @@ for the retiring player; a walkover before the first ball settles at a 'fair pri
 The system prices each match with a point-based Markov model: each player's probability of \
 winning a point on serve is backed out of the pre-match market price (assuming a tour-typical \
 sum of serve rates) and then updated with observed serve points. It buys when the model \
-probability exceeds the ask by a margin, only while the score and price have been stable for a \
+probability (blended with the market mid by `model_weight`; the raw model is also shown) exceeds the ask by a margin, only while the score and price have been stable for a \
 few seconds.
 
 Judge whether the model is likely right and the market wrong *in this situation*. Typical \
@@ -148,8 +148,9 @@ class LLM:
             return None, usage, str(response.stop_reason)
         return response.parsed_output, usage, "ok"
 
-    async def review_trade(self, context: dict[str, Any]) -> tuple[Optional[TradeVerdict], Usage, str]:
-        user = "Paper trade just entered:\n" + json.dumps(context, indent=2, sort_keys=True, default=str) + "\n\nWould you take this trade?"
+    async def review_trade(self, context: dict[str, Any], proposed: bool = False) -> tuple[Optional[TradeVerdict], Usage, str]:
+        head = "Proposed paper trade (it is placed only if you say take):\n" if proposed else "Paper trade just entered:\n"
+        user = head + json.dumps(context, indent=2, sort_keys=True, default=str) + "\n\nWould you take this trade?"
         out, usage, status = await self._parse(REVIEW_SYSTEM, user, TradeVerdict, self.review_effort, 8000)
         return out, usage, status  # type: ignore[return-value]
 

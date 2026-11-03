@@ -25,11 +25,13 @@ from tennisbot.model.live import SERVE_TOTALS, LiveBoard, infer_format, parse_bo
 from tennisbot.model.markov import MatchFormat, ScoreState, leverage, remaining_points, solve_serve_split, win_prob
 from tennisbot.strategies import (
     DEFAULT_PARAMS,
+    PARAMS_VERSION,
     Snapshot,
     StrategyParams,
     evaluate,
     params_from_dict,
     params_to_dict,
+    blend,
     should_exit,
     size_contracts,
     taker_fee_cents,
@@ -85,7 +87,15 @@ class Settings(BaseSettings):
     llm_review_effort: str = "low"
     llm_analyst_effort: str = "high"
     llm_daily_budget_usd: float = 1.0
+    # Temporary higher daily cap until a UTC time (experiments), then back to llm_daily_budget_usd.
+    llm_boost_daily_usd: float = 0.0
+    llm_boost_until: Optional[datetime] = None
     llm_shadow_reviews: bool = True
+    # LLM-gated strategies: after a "skip", wait before asking again about the same match, and cap
+    # the reviews per match. A "take" must still be tradeable when the answer arrives.
+    llm_gate_cooldown_sec: float = 900.0
+    llm_gate_max_reviews_per_match: int = 3
+    llm_gate_max_slip_cents: int = 1
     analyst_interval_hours: float = 24.0
     analyst_min_closed_trades: int = 10
 
@@ -127,6 +137,9 @@ class MatchRT:
     last_exit: dict = field(default_factory=dict)  # strategy -> ts
     signal_throttle: dict = field(default_factory=dict)
     volume: float = 0.0
+    reviewing: Optional[str] = None  # strategy waiting on an LLM gate verdict (reserves the match)
+    gate_reviews: dict = field(default_factory=lambda: defaultdict(int))  # strategy -> reviews asked
+    gate_skip_until: dict = field(default_factory=dict)  # strategy -> ts
 
     @property
     def live(self) -> bool:
@@ -163,8 +176,11 @@ class Engine:
 
     async def restore(self) -> None:
         stored = await self.db.get_setting("strategy_params")
-        if stored:
+        version = await self.db.get_setting("strategy_params_version")
+        if stored and version == str(PARAMS_VERSION):
             self.params = params_from_dict(json.loads(stored))
+        else:  # new defaults replace parameters saved under an older version
+            await self.set_params({})
         enabled = await self.db.get_setting("agent_enabled")
         if enabled is not None:
             self.agent_enabled = enabled == "true" and self.s.agent_enabled
@@ -655,10 +671,7 @@ class Engine:
         if gate is not None:
             return
         row = rt.row
-        bid_a, _, ask_a, asz_a = self._bbo(row.market_a)
-        bid_b, _, ask_b, asz_b = self._bbo(row.market_b)
-        snap = Snapshot(row.event_ticker, row.series, rt.fmt, rt.state, rt.model_a, rt.lev or 0.0, bid_a, ask_a, asz_a, bid_b, ask_b, asz_b,  # type: ignore[arg-type]
-                        calib=row.calib_source or "", volume=rt.volume or 0.0)
+        snap = self._snapshot(rt)
         for name, params in self.params.items():
             for intent in evaluate(name, params, snap):
                 ticker = row.market_a if intent.side == "a" else row.market_b
@@ -668,17 +681,43 @@ class Engine:
                     count = size_contracts(params, self.bankroll_cents(name), intent.model_p, intent.ask, intent.ask_size)
                     if count < 1:
                         reason = "size_zero"
+                if reason is None and params.llm_gate:
+                    if self.llm is None or self._llm_budget_left() <= 0.2:
+                        reason = "llm_unavailable"  # fail closed
+                    else:
+                        self._log_signal(rt, intent, ticker, "llm_review", now)
+                        rt.reviewing = name
+                        rt.gate_reviews[name] += 1
+                        asyncio.create_task(self._gated_entry(rt, name, intent, ticker, count))
+                        return
                 self._log_signal(rt, intent, ticker, reason or "trade", now)
                 if reason is None:
                     await self._enter(rt, name, intent, ticker, count)
 
+    def _snapshot(self, rt: MatchRT) -> Snapshot:
+        row = rt.row
+        bid_a, _, ask_a, asz_a = self._bbo(row.market_a)
+        bid_b, _, ask_b, asz_b = self._bbo(row.market_b)
+        return Snapshot(row.event_ticker, row.series, rt.fmt, rt.state, rt.model_a, rt.lev or 0.0,  # type: ignore[arg-type]
+                        bid_a, ask_a, asz_a, bid_b, ask_b, asz_b, calib=row.calib_source or "", volume=rt.volume or 0.0)
+
     def _position_block(self, rt: MatchRT, name: str, params: StrategyParams, now: float) -> Optional[str]:
-        if any(t.strategy == name and t.event_ticker == rt.row.event_ticker for t in self.open_trades.values()):
+        held = [t for t in self.open_trades.values() if t.event_ticker == rt.row.event_ticker]
+        if any(t.strategy == name for t in held):
             return "already_open"
+        if held:  # one position per match across strategies: they share the same model error
+            return "match_held"
+        if rt.reviewing is not None:
+            return "llm_reviewing"
         if rt.entries[name] >= params.max_entries_per_match:
             return "max_entries"
         if now - rt.last_exit.get(name, 0) < self.s.reentry_cooldown_sec:
             return "cooldown"
+        if params.llm_gate:
+            if now < rt.gate_skip_until.get(name, 0):
+                return "llm_skip_cooldown"
+            if rt.gate_reviews[name] >= self.s.llm_gate_max_reviews_per_match:
+                return "llm_max_reviews"
         return None
 
     def _log_signal(self, rt: MatchRT, intent: Any, ticker: str, action: str, now: float) -> None:
@@ -709,13 +748,21 @@ class Engine:
             "model_prob_a": rt.model_a, "point_leverage": rt.lev, "recent_mid_a_cents": recent, "match_volume": rt.volume,
         }
 
-    async def _enter(self, rt: MatchRT, name: str, intent: Any, ticker: str, count: int) -> None:
+    def _intent_context(self, rt: MatchRT, name: str, intent: Any) -> dict[str, Any]:
+        params = self.params[name]
+        return {**self._context(rt, intent.side), "strategy": name, "params_version": PARAMS_VERSION, "ask_cents": intent.ask,
+                "model_prob_bought_side": round(intent.model_p, 4), "raw_model_prob_bought_side": intent.extra.get("raw_model_p"),
+                "model_weight": params.model_weight, "edge": round(intent.edge, 4)}
+
+    async def _enter(self, rt: MatchRT, name: str, intent: Any, ticker: str, count: int,
+                     verdict: Optional[dict[str, Any]] = None) -> None:
         fee = taker_fee_cents(count, intent.ask, self.fee_rate.get(rt.row.series, 0.07))
+        ctx = self._intent_context(rt, name, intent)
         trade = PaperTrade(
             strategy=name, event_ticker=rt.row.event_ticker, ticker=ticker, series=rt.row.series,
             player=rt.row.player_a if intent.side == "a" else rt.row.player_b, count=count, entry_price=intent.ask,
             entry_fee=fee, model_p=round(intent.model_p, 4), edge=round(intent.edge, 4), leverage=rt.lev,
-            score=self._score_text(rt), context=self._context(rt, intent.side),
+            score=self._score_text(rt), context=ctx, llm_verdict=verdict,
         )
         async with self.db.session() as s:
             s.add(trade)
@@ -727,9 +774,60 @@ class Engine:
         self.marks += [(now + 10, trade.id, "mark_10s"), (now + 60, trade.id, "mark_60s")]
         logger.info("PAPER BUY [%s] %s x%d @ %dc model %.3f edge %.3f | %s", name, trade.player, count, intent.ask,
                     intent.model_p, intent.edge, trade.score)
-        if self.llm is not None and self.s.llm_shadow_reviews:
-            asyncio.create_task(self._shadow_review(trade.id, {**trade.context, "strategy": name, "ask_cents": intent.ask,
-                                                               "model_prob_bought_side": intent.model_p, "edge": intent.edge}))
+        if verdict is None and self.llm is not None and self.s.llm_shadow_reviews:
+            asyncio.create_task(self._shadow_review(trade.id, ctx))
+
+    async def _gated_entry(self, rt: MatchRT, name: str, intent: Any, ticker: str, count: int) -> None:
+        """Ask the LLM before entering. On "take", re-check the match under its lock and enter at the
+        current ask if the trade still qualifies. Every verdict is stored (kind="gate") so skipped
+        candidates can be scored against the settlement later."""
+        ctx = self._intent_context(rt, name, intent)
+        note: dict[str, Any] = {"strategy": name, "event_ticker": rt.row.event_ticker, "ticker": ticker, "side": intent.side,
+                                "ask": intent.ask, "count": count, "model_p": round(intent.model_p, 4),
+                                "raw_model_p": intent.extra.get("raw_model_p"), "edge": round(intent.edge, 4),
+                                "score": ctx["score"], "params_version": PARAMS_VERSION}
+        cost, model = 0.0, self.s.llm_model
+        try:
+            verdict, usage, status = await self.llm.review_trade(ctx, proposed=True)  # type: ignore[union-attr]
+            self.llm_spend_today += usage.cost_usd
+            cost, model = usage.cost_usd, usage.model
+            body = verdict.model_dump() if verdict else None
+            note.update(verdict=body, status=status)
+            if body is None or not body.get("take"):
+                rt.gate_skip_until[name] = time.time() + self.s.llm_gate_cooldown_sec
+                note["outcome"] = "skip" if body else "error"
+                return
+            async with rt.lock:
+                rt.reviewing = None
+                note["outcome"] = await self._recheck_and_enter(rt, name, intent, body)
+        except Exception:  # noqa: BLE001 - a failed review must never leave the match reserved
+            logger.exception("LLM gate failed for %s", rt.row.event_ticker)
+            note.setdefault("outcome", "error")
+        finally:
+            if rt.reviewing == name:
+                rt.reviewing = None
+            async with self.db.session() as s:
+                s.add(LLMNote(kind="gate", model=model, cost_usd=cost, body=note))
+                await s.commit()
+
+    async def _recheck_and_enter(self, rt: MatchRT, name: str, intent: Any, verdict: dict[str, Any]) -> str:
+        now = time.time()
+        params = self.params.get(name)
+        if params is None or self._gate(rt, now) is not None or rt.state is None:
+            return "stale_gate"
+        row = rt.row
+        fresh = next((i for i in evaluate(name, params, self._snapshot(rt)) if i.side == intent.side and i.skip is None), None)
+        if fresh is None or fresh.ask > intent.ask + self.s.llm_gate_max_slip_cents:
+            return "stale_price"
+        if self._position_block(rt, name, params, now) is not None:
+            return "stale_position"
+        count = size_contracts(params, self.bankroll_cents(name), fresh.model_p, fresh.ask, fresh.ask_size)
+        if count < 1:
+            return "stale_size"
+        ticker = row.market_a if fresh.side == "a" else row.market_b
+        self._log_signal(rt, fresh, ticker, "trade", now)
+        await self._enter(rt, name, fresh, ticker, count, verdict=verdict)
+        return "entered"
 
     async def _check_exits(self, rt: MatchRT) -> None:
         if rt.model_a is None:
@@ -738,9 +836,9 @@ class Engine:
             params = self.params.get(t.strategy)
             if params is None:
                 continue
-            p = rt.model_a if t.ticker == rt.row.market_a else 1 - rt.model_a
-            bid, bid_size, _, _ = self._bbo(t.ticker)
-            reason = should_exit(params, p, bid)
+            raw = rt.model_a if t.ticker == rt.row.market_a else 1 - rt.model_a
+            bid, bid_size, ask, _ = self._bbo(t.ticker)
+            reason = should_exit(params, blend(raw, bid, ask, params.model_weight), bid)
             if reason is None or bid is None or bid_size < 1:
                 continue
             if time.time() - rt.board_changed_at < 2 or self.unexplained_move(rt):
@@ -815,11 +913,17 @@ class Engine:
 
     # ------------------------------------------------------------------ LLM
 
+    def llm_budget(self) -> float:
+        until = self.s.llm_boost_until
+        if until is not None and self.s.llm_boost_daily_usd > 0 and utcnow() < _aware(until):
+            return self.s.llm_boost_daily_usd
+        return self.s.llm_daily_budget_usd
+
     def _llm_budget_left(self) -> float:
         today = utcnow().date()
         if today != self.llm_day:
             self.llm_day, self.llm_spend_today = today, 0.0
-        return self.s.llm_daily_budget_usd - self.llm_spend_today
+        return self.llm_budget() - self.llm_spend_today
 
     async def _shadow_review(self, trade_id: int, ctx: dict[str, Any]) -> None:
         if self.llm is None or self._llm_budget_left() <= 0.2:  # keep headroom for the analyst
@@ -871,6 +975,7 @@ class Engine:
     async def set_params(self, raw: dict[str, Any]) -> None:
         self.params = params_from_dict(raw)
         await self.db.set_setting("strategy_params", json.dumps(params_to_dict(self.params)))
+        await self.db.set_setting("strategy_params_version", str(PARAMS_VERSION))
 
     async def refresh_stats(self) -> None:
         from tennisbot.research import strategy_stats
@@ -880,7 +985,7 @@ class Engine:
             "ws_connected": self.stream.connected, "ws_messages": self.stream.messages, "rest_requests": self.client.requests,
             "rest_errors": self.client.errors, "tracked": len(self.matches), "live": sum(1 for r in self.matches.values() if r.live),
             "counts": await self.db.counts(), "llm_spend_today": round(self.llm_spend_today, 3),
-            "llm_budget": self.s.llm_daily_budget_usd, "llm": self.llm is not None, "now": utcnow(),
+            "llm_budget": self.llm_budget(), "llm": self.llm is not None, "now": utcnow(),
         })
 
     def _time_left(self, rt: MatchRT) -> Optional[dict[str, Any]]:
