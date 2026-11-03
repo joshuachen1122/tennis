@@ -12,9 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import func, select, update
 
+from tennisbot.archive import archive_days
 from tennisbot.db import BookTick, Database, LLMNote, Match, PaperTrade, ScoreEvent, Signal, TradeBar, utcnow
 from tennisbot.kalshi.client import Book, KalshiAPIError, KalshiClient, MarketStream, dollars
 from tennisbot.llm import LLM
@@ -75,14 +78,15 @@ class Settings(BaseSettings):
     max_board_age_sec: float = 5.0
     reentry_cooldown_sec: float = 30.0
     paper_bankroll_usd: float = 1000.0  # per strategy
+    archive_after_days: int = 2  # raw research rows older than this move to gzip CSV on the volume
 
     # LLM
     llm_model: str = "claude-opus-5-5"
     llm_review_effort: str = "low"
     llm_analyst_effort: str = "high"
-    llm_daily_budget_usd: float = 3.0
+    llm_daily_budget_usd: float = 1.0
     llm_shadow_reviews: bool = True
-    analyst_interval_hours: float = 6.0
+    analyst_interval_hours: float = 24.0
     analyst_min_closed_trades: int = 10
 
     def series_list(self) -> list[str]:
@@ -215,6 +219,7 @@ class Engine:
             "settle": self._loop(self.settle, self.s.settle_sec, delay=20),
             "stats": self._loop(self.refresh_stats, 10.0, delay=2),
             "analyst": self._loop(self.maybe_run_analyst, 600.0, delay=120),
+            "archive": self._loop(self.archive, 3600.0, delay=300),
             "stream": self.stream.run(self._stop),
         }
         return [asyncio.create_task(c, name=n) for n, c in loops.items()]
@@ -793,6 +798,20 @@ class Engine:
                 v = value if t.ticker == row.market_a else 1 - value
                 await self._close(t, round(v * 100, 2), 0.0, "settled")
             self.matches.pop(row.event_ticker, None)
+
+    # ------------------------------------------------------------------ storage
+
+    def db_path(self) -> Optional[Path]:
+        url = self.s.database_url
+        return Path(url.split(":///", 1)[1]) if url.startswith("sqlite") and ":///" in url else None
+
+    async def archive(self) -> None:
+        path = self.db_path()
+        if path is None or not path.exists():
+            return
+        days = await asyncio.to_thread(archive_days, path, self.s.archive_after_days)
+        if days:
+            logger.info("archived %s", ", ".join(days))
 
     # ------------------------------------------------------------------ LLM
 

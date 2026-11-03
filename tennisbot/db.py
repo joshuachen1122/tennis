@@ -113,8 +113,7 @@ class TradeBar(Base):
     vwap: Mapped[float] = mapped_column(Float, default=0.0)
     hi: Mapped[float] = mapped_column(Float, default=0.0)
     lo: Mapped[float] = mapped_column(Float, default=0.0)
-
-    __table_args__ = (Index("ix_trade_bars_ticker_ts", "ticker", "ts"),)
+    # No index: nothing in the app reads this table, and its index was a quarter of the file.
 
 
 class PaperTrade(Base):
@@ -189,6 +188,7 @@ class Database:
     async def init(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(text("DROP INDEX IF EXISTS ix_trade_bars_ticker_ts"))
 
     async def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         async with self.session() as s:

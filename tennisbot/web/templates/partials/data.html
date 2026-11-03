@@ -12,5 +12,13 @@
     </table>
   </div>
   {% endif %}
-  <p class="body-10 t3">Score events = every live-board change with the market and model at that moment. Book ticks = top of book ≤1/s per live match. Trade bars = public trades per second.</p>
+  {% if archives %}
+  <div class="card table-wrap" style="padding:4px 8px;margin-top:12px">
+    <table>
+      <thead><tr><th>Archived day (UTC)</th><th>Files (gzip CSV)</th></tr></thead>
+      <tbody>{% for a in archives %}<tr><td>{{ a.day }}</td><td>{% for f in a.files %}<a class="t2" style="text-decoration:underline;margin-right:10px" href="/api/archive/{{ a.day }}/{{ f.name }}">{{ f.name.split(".")[0] }}</a><span class="t3" style="margin-right:14px">{{ "%.1f" | format(f.mb) }} MB</span>{% endfor %}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+  <p class="body-10 t3">Raw rows older than {{ archive_days }} days move to compressed CSV archives on the volume (above) to keep the database small. Score events = every live-board change with the market and model at that moment. Book ticks = top of book ≤1/s per live match. Trade bars = public trades per second.</p>
 </section>

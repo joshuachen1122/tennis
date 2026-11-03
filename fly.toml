@@ -1,12 +1,15 @@
 # Fly.io config for the tennis paper-trading agent (separate app from Fifteen's btc-15m-kalshi-agent).
 #   fly apps create tennis-kalshi-agent
-#   fly volumes create tennis_data --region iad --size 5 -a tennis-kalshi-agent
+#   fly volumes create tennis_data_1g --region iad --size 1 -a tennis-kalshi-agent
+#   (the volume grows itself up to 3GB; raw data older than 2 days is archived as gzip CSV)
 #   secrets: ANTHROPIC_API_KEY, KALSHI_KEY_ID, KALSHI_PRIVATE_KEY, DASHBOARD_PASSWORD (same values as Fifteen)
 #   fly deploy
 app = "tennis-kalshi-agent"
 primary_region = "iad"
 kill_signal = "SIGTERM"
 kill_timeout = "30s"
+# ~330MB in use at 25 live matches on a 512MB VM; swap covers spikes (e.g. the analyst's report build).
+swap_size_mb = 512
 
 [build]
   dockerfile = "Dockerfile"
@@ -16,12 +19,15 @@ kill_timeout = "30s"
   PORT = "8080"
   LOG_LEVEL = "INFO"
   LLM_MODEL = "claude-opus-5-5"
-  LLM_DAILY_BUDGET_USD = "3.0"
+  LLM_DAILY_BUDGET_USD = "1.0"
 
 # SQLite lives on the volume: exactly one machine, never auto-stopped.
 [mounts]
-  source = "tennis_data"
+  source = "tennis_data_1g"
   destination = "/data"
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = "1GB"
+  auto_extend_size_limit = "3GB"
 
 [http_service]
   internal_port = 8080
@@ -39,4 +45,4 @@ kill_timeout = "30s"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "1gb"
+  memory = "512mb"

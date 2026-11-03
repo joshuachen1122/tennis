@@ -56,11 +56,11 @@ def test_pages_render_and_controls_need_password(engine):
         r = c.get(path)
         assert r.status_code == 200, (path, r.text[:300])
     assert "No open positions" in c.get("/").text  # default tab: your positions (none yet)
-    live = c.get("/?view=live").text
-    assert "Carlos Alcaraz" in live and "LIVE" in live and "85¢" in live
-    assert "Carlos Alcaraz" not in c.get("/?view=live&tour=WTA").text
-    for v in ("upcoming", "finished"):
-        assert c.get(f"/?view={v}").status_code == 200
+    assert "1 live now" in c.get("/").text  # live matches are counted (recorded), not listed
+    assert "Carlos Alcaraz" not in c.get("/?view=live").text  # unknown tab falls back to positions
+    assert c.get("/?view=finished").status_code == 200
+    assert c.get("/api/archive/2026-11-01/book_ticks.csv.gz").status_code == 404
+    assert c.get("/api/archive/..%2F..%2Fetc/passwd").status_code == 404
     r = c.post("/controls/agent", data={"action": "stop"})
     assert r.status_code == 401 and "Basic" in r.headers["www-authenticate"]
     assert engine.agent_enabled

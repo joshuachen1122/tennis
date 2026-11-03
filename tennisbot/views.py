@@ -113,7 +113,7 @@ def game_card(engine: "Engine", rt: "MatchRT", closed: list[PaperTrade]) -> dict
     }
 
 
-VIEWS = ("mine", "live", "upcoming", "finished")
+VIEWS = ("mine", "finished")  # live/upcoming matches are recorded for research, not shown
 UPCOMING_LIMIT = 60
 
 

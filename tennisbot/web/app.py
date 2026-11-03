@@ -9,6 +9,7 @@ import binascii
 import csv
 import io
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,12 +17,13 @@ from typing import Any, Optional
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, text
 
 from markupsafe import Markup
 
+from tennisbot.archive import archive_dir, list_archives
 from tennisbot.db import PaperTrade
 from tennisbot.views import game_detail, games_view
 
@@ -107,8 +109,10 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         return await call_next(request)
 
     def ctx(**extra: Any) -> dict[str, Any]:
+        path = engine.db_path()
         return {"stats": engine.stats, "health": engine.health, "review": engine.last_review,
-                "controls": engine.controls_state(), "editable": bool(password), **extra}
+                "controls": engine.controls_state(), "editable": bool(password),
+                "archives": list_archives(path) if path else [], "archive_days": engine.s.archive_after_days, **extra}
 
     def page(request: Request, name: str, **extra: Any) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(request, name, ctx(**extra))
@@ -183,6 +187,16 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
     async def analyst(request: Request) -> HTMLResponse:
         err = await engine.maybe_run_analyst(force=True)
         return page(request, "partials/review.html", error=err)
+
+    @app.get("/api/archive/{day}/{name}")
+    async def archive_file(day: str, name: str) -> Response:
+        path = engine.db_path()
+        if path is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or not re.fullmatch(r"[a-z_]+(\.\d+)?\.csv\.gz", name):
+            return Response("not found", status_code=404)
+        f = archive_dir(path) / day / name
+        if not f.exists():
+            return Response("not found", status_code=404)
+        return FileResponse(f, media_type="application/gzip", filename=f"{day}-{name}")
 
     @app.get("/api/stats")
     async def api_stats() -> JSONResponse:

@@ -46,15 +46,15 @@
 {% endblock %}
 {% block body %}
 <div class="page-head">
-  <h1 class="cond headline-20" style="margin:0">Tennis</h1>
+  <div>
+    <h1 class="cond headline-20" style="margin:0">Tennis</h1>
+    <p class="body-10 t3" style="margin:4px 0 0">Recording every Kalshi tennis match for research · {{ G.counts.live }} live now</p>
+  </div>
   {% include "partials/summary.html" %}
 </div>
-{% set labels = {"mine": "Your positions", "live": "Live", "upcoming": "Upcoming", "finished": "Finished"} %}
+{% set labels = {"mine": "Your positions", "finished": "Finished today"} %}
 <nav class="tabs" aria-label="Show">
-  {% for v in ["mine", "live", "upcoming", "finished"] %}<a href="/?view={{ v }}{% if G.tour != 'all' %}&tour={{ G.tour | urlencode }}{% endif %}" aria-current="{{ 'page' if G.view == v else 'false' }}">{{ labels[v] }}{% if G.counts[v] %}<span class="n">{{ G.counts[v] }}</span>{% endif %}</a>{% endfor %}
-</nav>
-<nav class="chips scroll-x" aria-label="Tour">
-  {% for t in ["all", "ATP", "WTA", "Challenger", "WTA 125", "ITF Men", "ITF Women"] %}<a class="chip" href="/?view={{ G.view }}{% if t != 'all' %}&tour={{ t | urlencode }}{% endif %}" aria-pressed="{{ 'true' if G.tour == t else 'false' }}">{{ "All" if t == "all" else t }}</a>{% endfor %}
+  {% for v in ["mine", "finished"] %}<a href="/?view={{ v }}" aria-current="{{ 'page' if G.view == v else 'false' }}">{{ labels[v] }}{% if G.counts[v] %}<span class="n">{{ G.counts[v] }}</span>{% endif %}</a>{% endfor %}
 </nav>
 {% include "partials/games.html" %}
 {% endblock %}

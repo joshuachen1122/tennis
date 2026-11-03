@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
+from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
@@ -23,7 +25,22 @@ class _Server(uvicorn.Server):
         pass
 
 
+def _restore_if_staged(url: str) -> None:
+    """Volume migrations: a database uploaded as `<db>.restore` replaces the live file at boot,
+    before anything opens it."""
+    if ":///" not in url:
+        return
+    path = Path(url.split(":///", 1)[1])
+    staged = path.with_name(path.name + ".restore")
+    if staged.exists():
+        for suffix in ("-wal", "-shm"):
+            Path(str(path) + suffix).unlink(missing_ok=True)
+        os.replace(staged, path)
+        logger.warning("restored database from %s", staged)
+
+
 async def run(settings: Settings) -> None:
+    _restore_if_staged(settings.database_url)
     db = Database(settings.database_url)
     await db.init()
     signer = Signer.from_env()
