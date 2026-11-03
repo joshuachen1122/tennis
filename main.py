@@ -71,6 +71,11 @@ async def run(settings: Settings) -> None:
             logger.error("task %s crashed", t.get_name(), exc_info=t.exception())
     server.should_exit = True
     await engine.shutdown()
+    web = next(t for t in tasks if t.get_name() == "web")
+    try:  # let uvicorn finish its lifespan instead of cancelling it mid-shutdown
+        await asyncio.wait_for(asyncio.shield(web), timeout=10)
+    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        pass
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
