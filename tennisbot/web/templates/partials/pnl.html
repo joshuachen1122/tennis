@@ -1,0 +1,20 @@
+<section id="pnl-panel" class="panel wide" hx-get="/partials/pnl" hx-trigger="every 30s" hx-swap="outerHTML">
+  <h2>P&amp;L history</h2>
+  <div class="pnl" data-chart='{{ pnl | tojson }}'>
+    <div class="pnl-head" aria-live="polite"></div>
+    <div class="pnl-plot"></div>
+    <div class="pnl-controls">
+      <div class="seg pnl-ranges" role="group" aria-label="Time range">
+        {% for r in ["1D", "1W", "1M", "ALL"] %}<button type="button" data-range="{{ r }}" aria-pressed="false">{{ r }}</button>{% endfor %}
+      </div>
+      <div class="seg pnl-strats" role="group" aria-label="Strategy">
+        <button type="button" data-strat="all" aria-pressed="false">All strategies</button>
+        {% for s in pnl.strategies %}<button type="button" data-strat="{{ s }}" aria-pressed="false">{{ s }}</button>{% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="muted small" style="margin-top:8px">
+    Realized paper P&amp;L, net of Kalshi fees. Each step is one closed position (sold or settled). Times are UTC. Hover or drag across the chart for the running total at any point.
+    {% if positions and positions.rows %} Open positions add {{ (positions.unreal / 100) | usd }} unrealized (not in the line).{% endif %}
+  </div>
+</section>

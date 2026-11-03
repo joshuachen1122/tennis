@@ -19,7 +19,7 @@ from tennisbot.db import BookTick, Database, LLMNote, Match, PaperTrade, ScoreEv
 from tennisbot.kalshi.client import Book, KalshiAPIError, KalshiClient, MarketStream, dollars
 from tennisbot.llm import LLM
 from tennisbot.model.live import SERVE_TOTALS, LiveBoard, infer_format, parse_board, point_winner, to_state
-from tennisbot.model.markov import MatchFormat, ScoreState, leverage, solve_serve_split, win_prob
+from tennisbot.model.markov import MatchFormat, ScoreState, leverage, remaining_points, solve_serve_split, win_prob
 from tennisbot.strategies import (
     DEFAULT_PARAMS,
     Snapshot,
@@ -34,6 +34,7 @@ from tennisbot.strategies import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SEC_PER_POINT = 40.0  # incl. changeovers; replaced by the match's own pace once it has 20+ points
 DEFAULT_SERIES = "KXATPMATCH,KXWTAMATCH,KXATPCHALLENGERMATCH,KXWTACHALLENGERMATCH,KXITFMATCH,KXITFWMATCH"
 
 
@@ -59,6 +60,8 @@ class Settings(BaseSettings):
 
     # model
     prior_points: float = 120.0  # weight of the pre-match serve estimate, in serve points
+    max_serve_gap: float = 0.20  # cap on |pa - pb| (0.20 is already a heavy mismatch)
+    inplay_calib_max_leverage: float = 0.12  # only back serve rates out of in-play prices at calm moments
     # trading guard rails (shared by all strategies)
     agent_enabled: bool = True
     quiet_sec: float = 5.0  # score and price unchanged for this long before trading
@@ -106,6 +109,7 @@ class MatchRT:
     model_a: Optional[float] = None
     lev: Optional[float] = None
     mids: deque = field(default_factory=lambda: deque(maxlen=900))  # (ts, mid_a)
+    first_live: float = 0.0  # when we first saw this match live (for points-per-second pace)
     ref_mid: Optional[float] = None  # mid when the board last changed
     since_lo: Optional[float] = None  # mid range since the board last changed
     since_hi: Optional[float] = None
@@ -174,6 +178,9 @@ class Engine:
             # Matches still in progress: reload so open positions keep their context after a restart.
             cutoff = utcnow() - timedelta(hours=36)
             for m in (await s.execute(select(Match).where(Match.first_seen >= cutoff, Match.status != "settled"))).scalars():
+                if m.calib_source == "inplay":  # re-derive under the current calibration rules
+                    m.pa0 = m.pb0 = None
+                    m.calib_source = ""
                 self._add_rt(m)
         logger.info("restored %d open paper trades, %d matches", len(self.open_trades), len(self.matches))
 
@@ -432,6 +439,8 @@ class Engine:
                 else:
                     rt.played_b += 1
                     rt.won_b += pw == 2
+        if board.is_live and not rt.first_live:
+            rt.first_live = t
         if board.is_live and row.started_at is None:
             row.started_at = utcnow()
             row.status = "live"
@@ -473,11 +482,17 @@ class Engine:
             pa, pb = solve_serve_split(row.prematch_mid_a / 100.0, total, fmt)
             row.calib_source = "prematch"
         else:
+            # Joined mid-match: invert the current price, but only at a low-leverage moment. At a
+            # tiebreak or break point a one-point lag in the board makes the inversion extreme.
             mid = self._mid_a(rt)
-            if mid is None or st is None:
+            if mid is None or st is None or st.in_tiebreak(fmt) or self.unexplained_move(rt):
+                return
+            if leverage(total / 2, total / 2, st, fmt) > self.s.inplay_calib_max_leverage:
                 return
             pa, pb = solve_serve_split(mid / 100.0, total, fmt, st)
             row.calib_source = "inplay"
+        gap = max(-self.s.max_serve_gap, min(self.s.max_serve_gap, pa - pb))  # cap implausible splits
+        pa, pb = total / 2 + gap / 2, total / 2 - gap / 2
         row.pa0, row.pb0 = round(pa, 4), round(pb, 4)
         rt.pa, rt.pb = row.pa0, row.pb0
         await self._save(row)
@@ -862,6 +877,83 @@ class Engine:
             })
         out.sort(key=lambda r: -(r["volume"] or 0))
         return out
+
+    def _time_left(self, rt: MatchRT) -> Optional[dict[str, Any]]:
+        """Expected points left (Monte Carlo on the model) x observed seconds per point."""
+        if rt.state is None or rt.fmt is None or rt.pa is None or rt.pb is None:
+            return None
+        cache = getattr(rt, "_tl_cache", None)
+        if cache and cache[0] == rt.board_key:
+            pts = cache[1]
+        else:
+            pts = remaining_points(rt.pa, rt.pb, rt.state, rt.fmt, sims=200)
+            rt._tl_cache = (rt.board_key, pts)  # type: ignore[attr-defined]
+        played = rt.played_a + rt.played_b
+        sec_per_point = DEFAULT_SEC_PER_POINT
+        if rt.first_live and played >= 20:  # pace over the points we have watched
+            sec_per_point = min(max((time.time() - rt.first_live) / played, 25.0), 75.0)
+        return {"points": pts, "minutes": pts * sec_per_point / 60}
+
+    def positions_view(self) -> dict[str, Any]:
+        """Open paper positions with everything needed to read them at a glance."""
+        rows = []
+        total_cost = total_unreal = 0.0
+        now = utcnow()
+        for t in sorted(self.open_trades.values(), key=lambda t: t.opened_at):
+            rt = self.matches.get(t.event_ticker)
+            row = rt.row if rt else None
+            side_a = bool(row and t.ticker == row.market_a)
+            bid, bid_size, ask, _ = self._bbo(t.ticker)
+            cost = t.count * t.entry_price + t.entry_fee
+            exit_fee = taker_fee_cents(t.count, bid, self.fee_rate.get(t.series, 0.07)) if bid else 0.0
+            unreal = (bid * t.count - exit_fee - cost) if bid is not None else None
+            model_now = None
+            if rt and rt.model_a is not None:
+                model_now = rt.model_a if side_a else 1 - rt.model_a
+            params = self.params.get(t.strategy)
+            if params and params.exit_on_convergence and model_now is not None:
+                plan = f"Sells when bid ≥ {max(1, round((model_now - params.exit_buffer) * 100))}¢ (model − {params.exit_buffer * 100:.0f}¢), else holds to settlement"
+            else:
+                plan = "Holds to settlement"
+            b = rt.board if rt else None
+            opp = (row.player_b if side_a else row.player_a) if row else ""
+            sets = [(a, c) if side_a else (c, a) for a, c in (b.set_scores if b else [])]  # from our player's side
+            pts = (str(b.raw_points_1), str(b.raw_points_2)) if b else ("", "")
+            if not side_a:
+                pts = (pts[1], pts[0])
+            serving = None
+            if b and b.server and row:
+                serving = "us" if (b.server == row.comp_a) == side_a else "them"
+            opened = _aware(t.opened_at)
+            started = _aware(row.started_at) if row and row.started_at else None
+            total_cost += cost
+            total_unreal += unreal or 0.0
+            rows.append({
+                "id": t.id, "strategy": t.strategy, "event": t.event_ticker, "player": t.player, "opponent": opp,
+                "tournament": row.tournament if row else "", "round": row.round if row else "", "series": t.series.replace("KX", "").replace("MATCH", ""),
+                "status": (b.status if b else (row.status if row else "")), "live": bool(rt and rt.live), "final": bool(rt and rt.final),
+                "sets": sets, "points": pts, "serving": serving, "count": t.count, "entry": t.entry_price, "cost": cost,
+                "bid": bid, "ask": ask, "bid_size": bid_size, "unreal": unreal, "unreal_per": (unreal / t.count) if unreal is not None else None,
+                "win_payout": t.count * 100 - cost, "loss": -cost, "model_entry": t.model_p, "model_now": model_now,
+                "edge_now": (model_now - bid / 100) if (model_now is not None and bid) else None,
+                "score_at_entry": t.score, "plan": plan, "held_min": (now - opened).total_seconds() / 60,
+                "match_min": (now - started).total_seconds() / 60 if started else None,
+                "saw_start": bool(row and row.calib_source == "prematch"),
+                "time_left": self._time_left(rt) if rt and rt.live else None,
+                "llm": t.llm_verdict,
+            })
+        return {"rows": rows, "cost": total_cost, "unreal": total_unreal}
+
+    async def pnl_series(self) -> dict[str, Any]:
+        """Realized P&L steps (one per closed trade), for the P&L history chart."""
+        async with self.db.session() as s:
+            res = await s.execute(select(PaperTrade.closed_at, PaperTrade.pnl, PaperTrade.player, PaperTrade.strategy, PaperTrade.exit_reason, PaperTrade.opened_at)
+                                  .where(PaperTrade.pnl.is_not(None)).order_by(PaperTrade.closed_at))
+            closed = res.all()
+            first = (await s.execute(select(func.min(PaperTrade.opened_at)))).scalar()
+        pts = [[int(_aware(c).timestamp() * 1000), round(p, 2), name, strat, reason] for c, p, name, strat, reason, _ in closed]
+        start = int(_aware(first).timestamp() * 1000) if first else int(time.time() * 1000)
+        return {"now": int(time.time() * 1000), "start": start, "trades": pts, "strategies": sorted(self.params)}
 
     def controls_state(self) -> dict[str, Any]:
         return {"agent_enabled": self.agent_enabled, "params": params_to_dict(self.params)}

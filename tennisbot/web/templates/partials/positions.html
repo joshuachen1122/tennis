@@ -1,0 +1,55 @@
+{% macro signed(v) %}{% if v is none %}—{% else %}<span class="{{ 'good' if v > 0 else ('bad' if v < 0 else '') }}">{{ "+" if v > 0 else "" }}{{ (v / 100) | usd }}</span>{% endif %}{% endmacro %}
+{% macro dur(m) %}{% if m is none %}—{% elif m < 1 %}&lt;1m{% elif m < 60 %}{{ m | round | int }}m{% else %}{{ (m // 60) | int }}h {{ (m % 60) | round | int }}m{% endif %}{% endmacro %}
+{% macro pt(x) %}{{ "AD" if x == "50" else x }}{% endmacro %}
+{% set P = positions %}
+<section id="positions" class="panel wide" hx-get="/partials/positions" hx-trigger="every 3s" hx-swap="outerHTML">
+  <h2>Open positions · {{ P.rows | length }}</h2>
+  {% if not P.rows %}
+    <div class="empty">No open paper positions. Trades appear here the moment a strategy enters.</div>
+  {% else %}
+  <div class="pos-summary">
+    <div><div class="label">Unrealized P/L</div><div class="big">{{ signed(P.unreal) }}</div></div>
+    <div><div class="label">Capital at risk</div><div class="big">{{ (P.cost / 100) | usd }}</div></div>
+    <div><div class="label">Positions</div><div class="big">{{ P.rows | length }}</div></div>
+    <div class="muted small">Unrealized = sell everything now at the bid, after Kalshi's fee. Paper fills only.</div>
+  </div>
+  <div class="cards">
+  {% for r in P.rows %}
+    <article class="card">
+      <div class="card-top">
+        <span class="pill strat">{{ r.strategy }}</span>
+        {% if r.final %}<span class="pill warn">match over · settling</span>{% elif r.live %}<span class="pill good">● LIVE</span>{% else %}<span class="pill muted">{{ r.status or "waiting" }}</span>{% endif %}
+        <a class="muted small" href="/match/{{ r.event }}">chart →</a>
+      </div>
+      <div class="who"><strong>{{ r.player }}</strong> <span class="muted">vs {{ r.opponent }}</span></div>
+      <div class="muted small">{{ r.series }} · {{ r.tournament }}{% if r.round %} · {{ r.round }}{% endif %}</div>
+
+      <div class="scorebox">
+        <table class="score">
+          <tr><td class="l {{ 'srv' if r.serving == 'us' else '' }}">{{ r.player }}</td>{% for a, b in r.sets %}<td>{{ a }}</td>{% endfor %}<td class="pts">{{ pt(r.points[0]) }}</td></tr>
+          <tr><td class="l {{ 'srv' if r.serving == 'them' else '' }}">{{ r.opponent }}</td>{% for a, b in r.sets %}<td>{{ b }}</td>{% endfor %}<td class="pts">{{ pt(r.points[1]) }}</td></tr>
+        </table>
+        <div class="small muted">
+          {% if r.time_left %}~{{ dur(r.time_left.minutes) }} left (≈{{ r.time_left.points | round | int }} pts){% else %}time left —{% endif %}
+          · {{ 'in match' if r.saw_start else 'watching' }} {{ dur(r.match_min) }}
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div><div class="label">Bought</div><div class="val">{{ "%g" | format(r.count) }} @ {{ r.entry | cents }}¢</div><div class="small muted">{{ (r.cost / 100) | usd }} incl. fee · {{ dur(r.held_min) }} ago</div></div>
+        <div><div class="label">Now (bid / ask)</div><div class="val">{{ r.bid | cents }}¢ / {{ r.ask | cents }}¢</div><div class="small muted">{% if r.bid is not none %}{{ "%+.0f" | format(r.bid - r.entry) }}¢ vs entry{% endif %}</div></div>
+        <div><div class="label">Unrealized</div><div class="val">{{ signed(r.unreal) }}</div><div class="small muted">{% if r.unreal_per is not none %}{{ "%+.1f" | format(r.unreal_per) }}¢ per contract{% endif %}</div></div>
+        <div><div class="label">Model win prob</div><div class="val">{% if r.model_now is not none %}{{ "%.1f" | format(r.model_now * 100) }}%{% else %}—{% endif %}</div><div class="small muted">{{ "%.1f" | format(r.model_entry * 100) }}% at entry{% if r.edge_now is not none %} · edge vs bid {{ "%+.1f" | format(r.edge_now * 100) }}¢{% endif %}</div></div>
+      </div>
+
+      <div class="outcomes">
+        <span>If {{ r.player.split(" ")[-1] }} wins <strong class="good">+{{ (r.win_payout / 100) | usd }}</strong></span>
+        <span>If loses <strong class="bad">{{ (r.loss / 100) | usd }}</strong></span>
+      </div>
+      <div class="small muted">Entered at {{ r.score_at_entry }} · {{ r.plan }}</div>
+      {% if r.llm %}<div class="small" title="{{ r.llm.reasoning }}">LLM shadow: <strong>{{ "take" if r.llm.take else "skip" }}</strong> ({{ "%.0f" | format(r.llm.probability * 100) }}%) — <span class="muted">{{ r.llm.reasoning | truncate(140) }}</span></div>{% endif %}
+    </article>
+  {% endfor %}
+  </div>
+  {% endif %}
+</section>

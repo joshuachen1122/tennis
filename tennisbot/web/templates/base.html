@@ -54,7 +54,40 @@
     .viz .series-model { fill: none; stroke: var(--model); stroke-width: 2; stroke-dasharray: 5 3; }
     .viz .entry { fill: var(--good); stroke: var(--surface); stroke-width: 2; }
     .legend span { margin-right: 14px; font-size: 12px; } .sw { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
-    @media (max-width: 640px) { header { padding: 12px 16px 2px; } main { padding: 8px 16px 24px; gap: 12px; } .tile .value { font-size: 17px; } }
+    .small { font-size: 12px; } .label { color: var(--muted); font-size: 12px; }
+    /* Open positions */
+    .pos-summary { display: flex; gap: 28px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+    .pos-summary .big { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 12px; }
+    .card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; background: var(--page); }
+    .card-top { display: flex; gap: 8px; align-items: center; } .card-top a { margin-left: auto; }
+    .pill.strat { color: var(--accent); } .pill.muted { color: var(--muted); }
+    .who { font-size: 16px; }
+    .scorebox { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: var(--surface); }
+    table.score td { border: 0; padding: 2px 6px; font-size: 15px; font-weight: 600; }
+    table.score td.l { font-weight: 500; width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    table.score td.pts { color: var(--accent); min-width: 34px; }
+    td.srv::after { content: " ●"; color: var(--good); font-size: 10px; vertical-align: middle; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+    .grid2 .val { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .outcomes { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+    /* P&L history (as in Fifteen) */
+    .pnl-head { margin-bottom: 6px; min-height: 60px; }
+    .pnl-value { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .pnl-change { font-size: 13px; font-variant-numeric: tabular-nums; }
+    .pnl-plot svg { width: 100%; height: auto; display: block; touch-action: pan-y; cursor: crosshair; }
+    .viz-line .grid { stroke: var(--grid); } .viz-line .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .viz-line .ref { stroke: var(--muted); stroke-dasharray: 4 4; } .viz-line .crosshair { stroke: var(--muted); }
+    .pnl-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+    .pnl-up .pnl-line { stroke: var(--good); } .pnl-down .pnl-line { stroke: var(--bad); }
+    .pnl-up .hover-dot { fill: var(--good); } .pnl-down .hover-dot { fill: var(--bad); }
+    .hover-dot { stroke: var(--surface); stroke-width: 2; } .pnl-fade { fill: var(--surface); opacity: .65; }
+    .pnl-controls { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+    .seg { display: flex; gap: 4px; flex-wrap: wrap; }
+    .seg button { background: transparent; color: var(--muted); padding: 4px 10px; font-size: 12px; border-radius: 6px; font-weight: 500; }
+    .seg button[aria-pressed="true"] { color: var(--text); background: var(--grid); }
+    @media (max-width: 640px) {
+      .pos-summary .big { font-size: 20px; } .pnl-value { font-size: 24px; } header { padding: 12px 16px 2px; } main { padding: 8px 16px 24px; gap: 12px; } .tile .value { font-size: 17px; } }
   </style>
 </head>
 <body>

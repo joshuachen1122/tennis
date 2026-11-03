@@ -5,11 +5,125 @@
   <span class="sub">Kalshi tennis · paper trading · Markov model vs market</span>
 </header>
 <main>
-  {% include "partials/controls.html" %}
+  {% include "partials/positions.html" %}
+  {% include "partials/pnl.html" %}
   {% include "partials/stats.html" %}
   {% include "partials/live.html" %}
   {% include "partials/trades.html" %}
+  {% include "partials/controls.html" %}
   {% include "partials/review.html" %}
   {% include "partials/data.html" %}
 </main>
+<script>
+  // P&L history, ported from Fifteen: a step line drawn client-side so range and strategy buttons
+  // can rescale it. Choices survive the panel's refresh; refreshes wait while the chart is hovered.
+  const PNL_RANGES = { "1D": [864e5, "past day"], "1W": [6048e5, "past week"], "1M": [2592e6, "past month"], "ALL": [null, "all time"] };
+  const PNL_H = 240, PNL_L = 60, PNL_R = 12, PNL_T = 10, PNL_B = 26, SVG_NS = "http://www.w3.org/2000/svg";
+  let pnlRange = "ALL", pnlStrat = "all", pnlActive = false;
+  try { pnlRange = localStorage.getItem("pnlRange") || "ALL"; pnlStrat = localStorage.getItem("pnlStrat") || "all"; } catch {}
+  if (!PNL_RANGES[pnlRange]) pnlRange = "ALL";
+  const fmtCents = (c, sign = true) => `${c < 0 ? "−" : (sign && c > 0 ? "+" : "")}$${(Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtUtc = (ms, opts) => new Intl.DateTimeFormat("en-US", { timeZone: "UTC", hourCycle: "h23", ...opts }).format(ms);
+  const fmtWhen = (ms) => `${fmtUtc(ms, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} UTC`;
+  function niceStep(span) { const raw = span / 4, mag = 10 ** Math.floor(Math.log10(raw)); for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * mag) return m * mag; return 10 * mag; }
+  function svgEl(tag, attrs, parent) { const el = document.createElementNS(SVG_NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); if (parent) parent.appendChild(el); return el; }
+  function renderPnl(root) {
+    const data = JSON.parse(root.dataset.chart);
+    if (pnlStrat !== "all" && !data.strategies.includes(pnlStrat)) pnlStrat = "all";
+    const plot = root.querySelector(".pnl-plot");
+    const W = Math.max(plot.clientWidth, 320);
+    const [span, rangeLabel] = PNL_RANGES[pnlRange];
+    let run = 0;
+    const points = data.trades.filter((p) => pnlStrat === "all" || p[3] === pnlStrat).map((p) => { run += p[1]; return [p[0], run, p[1], p[2], p[3], p[4]]; });
+    const start = span === null ? data.start : Math.max(data.now - span, data.start);
+    const before = points.filter((p) => p[0] < start);
+    const base = before.length ? before[before.length - 1][1] : 0;
+    const inRange = points.filter((p) => p[0] >= start);
+    const last = inRange.length ? inRange[inRange.length - 1][1] : base;
+    const series = [{ t: start, v: base, p: null }, ...inRange.map((p) => ({ t: p[0], v: p[1], p })), { t: data.now, v: last, p: null }];
+    const up = last >= base;
+    let lo = Math.min(...series.map((s) => s.v)), hi = Math.max(...series.map((s) => s.v));
+    if (hi - lo < 20) { lo -= 10; hi += 10; }
+    const step = niceStep(hi - lo);
+    lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const plotW = W - PNL_L - PNL_R, plotH = PNL_H - PNL_T - PNL_B;
+    const x = (t) => PNL_L + (t - start) / Math.max(data.now - start, 1) * plotW;
+    const y = (v) => PNL_T + (hi - v) / (hi - lo) * plotH;
+    const svg = svgEl("svg", { class: `viz-line pnl-svg ${up ? "pnl-up" : "pnl-down"}`, viewBox: `0 0 ${W} ${PNL_H}`, role: "img", tabindex: "0",
+      "aria-label": `Realized P&L ${rangeLabel}: ${fmtCents(last - base)}, now ${fmtCents(last)} in total. Arrow keys step through trades.` });
+    for (let v = lo; v <= hi + step / 2; v += step) {
+      svgEl("line", { class: "grid", x1: PNL_L, x2: W - PNL_R, y1: y(v), y2: y(v) }, svg);
+      svgEl("text", { class: "tick", x: PNL_L - 8, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = fmtCents(v, false);
+    }
+    const spanMs = data.now - start;
+    const tickOpts = spanMs <= 2 * 864e5 ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" };
+    [[start, "start"], [start + spanMs / 2, "middle"], [data.now, "end"]].forEach(([t, anchor]) => {
+      svgEl("text", { class: "tick", x: x(t), y: PNL_H - 8, "text-anchor": anchor }, svg).textContent = fmtUtc(t, tickOpts);
+    });
+    svgEl("line", { class: "ref", x1: PNL_L, x2: W - PNL_R, y1: y(base), y2: y(base) }, svg);
+    let d = `M${x(series[0].t).toFixed(1)},${y(series[0].v).toFixed(1)}`;
+    for (const s of series.slice(1)) d += `H${x(s.t).toFixed(1)}V${y(s.v).toFixed(1)}`;
+    svgEl("path", { class: "pnl-line", d }, svg);
+    const fade = svgEl("rect", { class: "pnl-fade", y: PNL_T, height: plotH, visibility: "hidden" }, svg);
+    const cross = svgEl("line", { class: "crosshair", y1: PNL_T, y2: PNL_T + plotH, visibility: "hidden" }, svg);
+    const dot = svgEl("circle", { class: "hover-dot", r: 5, visibility: "hidden" }, svg);
+    const head = root.querySelector(".pnl-head");
+    const who = pnlStrat === "all" ? "all strategies" : pnlStrat;
+    function show(i) {
+      const s = i === null ? series[series.length - 1] : series[i];
+      const change = s.v - base;
+      const cls = change > 0 ? "good" : (change < 0 ? "bad" : "");
+      const arrow = change > 0 ? "▲ " : (change < 0 ? "▼ " : "");
+      let detail = `${rangeLabel} · ${who} · ${inRange.length} closed`;
+      if (i !== null) {
+        detail = s.p ? `${fmtWhen(s.t)} · ${s.p[2] >= 0 ? "won" : "lost"} ${fmtCents(Math.abs(s.p[2]), false)} on ${s.p[3]} (${s.p[4]}, ${s.p[5]})`
+                     : `${fmtWhen(s.t)} · ${i === 0 ? "start of range" : "now"}`;
+      }
+      head.innerHTML = `<div class="pnl-value"></div><div class="pnl-change"><span class="${cls}"></span> <span class="muted"></span></div>`;
+      head.querySelector(".pnl-value").textContent = fmtCents(s.v);
+      head.querySelector(".pnl-change span:first-child").textContent = arrow + fmtCents(change);
+      head.querySelector(".pnl-change .muted").textContent = detail;
+      for (const el of [fade, cross, dot]) el.setAttribute("visibility", i === null ? "hidden" : "visible");
+      if (i === null) return;
+      const hx = x(s.t);
+      cross.setAttribute("x1", hx); cross.setAttribute("x2", hx);
+      dot.setAttribute("cx", hx); dot.setAttribute("cy", y(s.v));
+      fade.setAttribute("x", hx); fade.setAttribute("width", Math.max(W - PNL_R - hx, 0));
+    }
+    let current = null;
+    const nearest = (px) => { let best = 0; series.forEach((s, i) => { if (Math.abs(x(s.t) - px) <= Math.abs(x(series[best].t) - px)) best = i; }); return best; };
+    const track = (event) => { const box = svg.getBoundingClientRect(); pnlActive = true; current = nearest((event.clientX - box.left) * W / box.width); show(current); };
+    svg.addEventListener("pointermove", track);
+    svg.addEventListener("pointerdown", track);
+    const reset = () => { pnlActive = false; current = null; show(null); };
+    svg.addEventListener("pointerleave", reset); svg.addEventListener("pointercancel", reset); svg.addEventListener("blur", reset);
+    svg.addEventListener("keydown", (event) => {
+      const move = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+      if (event.key === "Escape") return reset();
+      if (!move) return;
+      event.preventDefault(); pnlActive = true;
+      current = Math.min(Math.max((current ?? series.length - 1) + move, 0), series.length - 1);
+      show(current);
+    });
+    plot.replaceChildren(svg);
+    show(null);
+    root.querySelectorAll(".pnl-ranges button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === pnlRange)));
+    root.querySelectorAll(".pnl-strats button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.strat === pnlStrat)));
+  }
+  document.addEventListener("click", (event) => {
+    const r = event.target.closest && event.target.closest(".pnl-ranges button");
+    const s = event.target.closest && event.target.closest(".pnl-strats button");
+    if (!r && !s) return;
+    if (r) pnlRange = r.dataset.range;
+    if (s) pnlStrat = s.dataset.strat;
+    try { localStorage.setItem("pnlRange", pnlRange); localStorage.setItem("pnlStrat", pnlStrat); } catch {}
+    document.querySelectorAll(".pnl").forEach(renderPnl);
+  });
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.detail.target && event.detail.target.id === "pnl-panel" && pnlActive) event.detail.shouldSwap = false;
+  });
+  let pnlResize = null;
+  window.addEventListener("resize", () => { clearTimeout(pnlResize); pnlResize = setTimeout(() => document.querySelectorAll(".pnl").forEach(renderPnl), 150); });
+  htmx.onLoad((elt) => { (elt.matches && elt.matches(".pnl") ? [elt] : [...elt.querySelectorAll(".pnl")]).forEach(renderPnl); });
+</script>
 {% endblock %}

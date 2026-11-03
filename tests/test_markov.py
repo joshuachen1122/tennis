@@ -109,3 +109,13 @@ def test_matches_monte_carlo(fmt, state):
     n = 20000
     wins = sum(_simulate(pa, pb, state, fmt, rng) for _ in range(n))
     assert win_prob(pa, pb, state, fmt) == pytest.approx(wins / n, abs=0.012)
+
+
+def test_remaining_points():
+    from tennisbot.model.markov import remaining_points
+
+    start = remaining_points(0.64, 0.64, ScoreState(), BO3)
+    assert 120 < start < 220  # a typical best-of-3 is ~150-170 points
+    late = remaining_points(0.64, 0.64, ScoreState(1, 0, 5, 3, 3, 0, True), BO3)
+    assert late < 15
+    assert remaining_points(0.64, 0.64, ScoreState(), BO5_SLAM) > start

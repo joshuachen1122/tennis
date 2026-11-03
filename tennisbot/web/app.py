@@ -70,7 +70,7 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
 
     def ctx(**extra: Any) -> dict[str, Any]:
         return {"stats": engine.stats, "health": engine.health, "live": engine.live_view(), "review": engine.last_review,
-                "controls": engine.controls_state(), "editable": bool(password), **extra}
+                "controls": engine.controls_state(), "editable": bool(password), "positions": engine.positions_view(), **extra}
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -78,13 +78,14 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
-        return TEMPLATES.TemplateResponse(request, "index.html", ctx())
+        return TEMPLATES.TemplateResponse(request, "index.html", ctx(pnl=await engine.pnl_series()))
 
     @app.get("/partials/{name}", response_class=HTMLResponse)
     async def partial(request: Request, name: str) -> HTMLResponse:
-        if name not in ("live", "stats", "trades", "data", "review", "controls"):
+        if name not in ("live", "stats", "trades", "data", "review", "controls", "positions", "pnl"):
             return HTMLResponse("not found", status_code=404)
-        return TEMPLATES.TemplateResponse(request, f"partials/{name}.html", ctx())
+        extra = {"pnl": await engine.pnl_series()} if name == "pnl" else {}
+        return TEMPLATES.TemplateResponse(request, f"partials/{name}.html", ctx(**extra))
 
     async def form(request: Request) -> dict[str, str]:
         return {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}

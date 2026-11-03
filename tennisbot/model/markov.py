@@ -275,3 +275,27 @@ def _advance(s: ScoreState, fmt: MatchFormat, a_wins: bool) -> ScoreState:
     if (gb >= 6 and gb - ga >= 2) or gb == 7:
         return ScoreState(s.sets_a, s.sets_b + 1, 0, 0, 0, 0, not s.a_serving)
     return ScoreState(s.sets_a, s.sets_b, ga, gb, 0, 0, not s.a_serving)
+
+
+def remaining_points(pa: float, pb: float, state: ScoreState, fmt: MatchFormat, sims: int = 300, seed: int = 0) -> float:
+    """Expected number of points left in the match (Monte Carlo over the same point process).
+    Used to estimate time remaining; tennis has no clock."""
+    import random
+
+    rng = random.Random(seed)
+    need = fmt.sets_to_win
+    total = 0
+    for _ in range(sims):
+        s, n = state, 0
+        while s.sets_a < need and s.sets_b < need and n < 400:
+            if s.in_tiebreak(fmt):
+                k = s.points_a + s.points_b
+                a_first = s.a_serving if tb_server_is_first(k) else not s.a_serving
+                a_serves = tb_server_is_first(k) == a_first
+            else:
+                a_serves = s.a_serving
+            p_point_a = pa if a_serves else 1 - pb
+            s = _advance(s, fmt, a_wins=rng.random() < p_point_a)
+            n += 1
+        total += n
+    return total / sims
