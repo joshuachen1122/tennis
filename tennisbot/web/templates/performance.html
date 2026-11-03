@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Tennis · Performance{% endblock %}
+{% block style %}
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .stat { padding: 14px 16px; border-radius: 12px; }
+  .stat .k { font-size: 12px; color: var(--k-text-3); } .stat .v { font-size: 20px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; } .stat .s { font-size: 12px; color: var(--k-text-3); margin-top: 2px; }
+  h2.sec { font-family: "Barlow Condensed", sans-serif; font-size: 26px; font-weight: 600; margin: 32px 0 12px; display: flex; align-items: baseline; gap: 12px; }
+  .pnl-head { min-height: 64px; margin-bottom: 6px; }
+  .pnl-value { font-family: "Barlow Condensed", sans-serif; font-size: 40px; font-weight: 600; line-height: 44px; font-variant-numeric: tabular-nums; }
+  .pnl-change { font-size: 13px; }
+  .pnl-plot svg { width: 100%; height: auto; display: block; touch-action: pan-y; cursor: crosshair; }
+  .pnl-plot .grid { stroke: var(--k-stroke-3); stroke-dasharray: 2 4; } .pnl-plot .tick { fill: var(--k-text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pnl-plot .ref { stroke: var(--k-text-3); stroke-dasharray: 4 4; } .pnl-plot .crosshair { stroke: var(--k-text-3); }
+  .pnl-line { fill: none; stroke-width: 2; } .pnl-up .pnl-line { stroke: var(--k-green); } .pnl-down .pnl-line { stroke: var(--k-red); }
+  .hover-dot { stroke: var(--k-surface); stroke-width: 2; } .pnl-up .hover-dot { fill: var(--k-green); } .pnl-down .hover-dot { fill: var(--k-red); }
+  .pnl-fade { fill: var(--k-surface); opacity: .65; }
+  .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg button { font-size: 13px; font-weight: 500; padding: 5px 12px; border-radius: 999px; color: var(--k-text-3); }
+  .seg button[aria-pressed="true"] { color: var(--k-text-1); background: var(--k-container-3); }
+  .pnl-controls { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+{% endblock %}
+{% block body %}
+<h1 class="cond headline-20" style="margin:0 0 18px">Performance</h1>
+<div class="card" style="padding:18px">{% include "partials/pnl.html" %}</div>
+
+{% for name, st in (stats.strategies or {}).items() %}
+<h2 class="sec">{{ name }} <span class="body-20 t3" style="font-family:Inter">{{ blurbs.get(name, "") }}</span></h2>
+<div class="stats">
+  <div class="card stat"><div class="k">P&amp;L, net of fees</div><div class="v {{ 'green' if st.pnl_usd > 0 else ('red' if st.pnl_usd < 0 else '') }}">{{ st.pnl_usd | signed_usd }}</div><div class="s">equity {{ st.equity_usd | usd }}</div></div>
+  <div class="card stat"><div class="k">Trades</div><div class="v">{{ st.trades }}</div><div class="s">{{ st.open }} open · {{ st.closed }} closed</div></div>
+  <div class="card stat"><div class="k">Win rate</div><div class="v">{{ st.win_rate | pct }}</div><div class="s">{{ st.wins }} of {{ st.closed }}</div></div>
+  <div class="card stat"><div class="k">ROI on staked</div><div class="v">{{ st.roi | pct }}</div><div class="s">{{ st.staked_usd | usd }} staked</div></div>
+  <div class="card stat"><div class="k">Model expected</div><div class="v">{{ st.model_expected_pnl_usd | signed_usd }}</div><div class="s">avg edge {{ st.avg_edge | pct }}</div></div>
+  <div class="card stat"><div class="k">Markout 10s / 60s</div><div class="v">{% if st.avg_markout_10s_c is not none %}{{ "%+.1f" | format(st.avg_markout_10s_c) }}{% else %}—{% endif %} / {% if st.avg_markout_60s_c is not none %}{{ "%+.1f" | format(st.avg_markout_60s_c) }}{% else %}—{% endif %}¢</div><div class="s">bid after entry − entry</div></div>
+  <div class="card stat"><div class="k">Fees</div><div class="v">{{ st.fees_usd | usd }}</div></div>
+  <div class="card stat"><div class="k">LLM shadow</div><div class="v">{{ st.llm_reviewed }} reviewed</div><div class="s">take {{ st.llm_take_pnl_usd | signed_usd }} · skip {{ st.llm_skip_pnl_usd | signed_usd }}</div></div>
+</div>
+{% endfor %}
+
+<h2 class="sec">Closed trades</h2>
+<div class="card table-wrap" style="padding:4px 8px">
+  <table>
+    <thead><tr><th>Closed</th><th>Strategy</th><th>Match</th><th>Bought</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Exit</th><th>How</th><th class="r">P&amp;L</th><th>LLM</th></tr></thead>
+    <tbody>
+    {% for t in closed %}<tr>
+      <td><time data-local datetime="{{ t.closed_at | iso }}">{{ t.closed_at }}</time></td><td class="t2">{{ t.strategy }}</td>
+      <td><a href="/match/{{ t.event_ticker }}" style="text-decoration:underline;text-decoration-color:var(--k-stroke-2)">{{ t.context.get("player_a", "") }} vs {{ t.context.get("player_b", "") }}</a></td>
+      <td>{{ t.player }}</td><td class="r">{{ "%g" | format(t.count) }}</td><td class="r">{{ t.entry_price | cents }}¢</td><td class="r">{{ t.exit_price | cents }}¢</td><td class="t2">{{ t.exit_reason }}</td>
+      <td class="r {{ 'green' if t.pnl > 0 else ('red' if t.pnl < 0 else '') }}">{{ (t.pnl / 100) | signed_usd }}</td>
+      <td class="t2">{% if t.llm_verdict %}{{ "take" if t.llm_verdict.take else "skip" }}{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="10" class="empty">No closed trades yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+{% block script %}{% include "partials/pnl_script.html" %}{% endblock %}

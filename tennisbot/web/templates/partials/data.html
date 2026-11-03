@@ -1,15 +1,16 @@
-<section id="data" class="panel" hx-get="/partials/data" hx-trigger="every 15s" hx-swap="outerHTML">
-  <h2>Data recorder</h2>
-  <div class="tiles">
-    <div class="tile"><div class="label">Matches tracked</div><div class="value">{{ health.tracked or 0 }}</div><div class="muted">{{ health.live or 0 }} live · {{ health.milestones or 0 }} with score feed</div></div>
-    <div class="tile"><div class="label">Order books</div><div class="value">{{ "WebSocket" if health.ws_connected else "REST poll" }}</div><div class="muted">{{ "{:,}".format(health.ws_messages or 0) }} ws msgs</div></div>
-    <div class="tile"><div class="label">REST calls</div><div class="value">{{ "{:,}".format(health.rest_requests or 0) }}</div><div class="muted">{{ health.rest_errors or 0 }} errors</div></div>
+<section id="data" hx-get="/partials/data" hx-trigger="every 15s" hx-swap="outerHTML">
+  <div class="stats">
+    <div class="card stat"><div class="k">Matches tracked</div><div class="v">{{ health.tracked or 0 }}</div><div class="s">{{ health.live or 0 }} live · {{ health.milestones or 0 }} with score feed</div></div>
+    <div class="card stat"><div class="k">Order books</div><div class="v">{{ "WebSocket" if health.ws_connected else "REST poll" }}</div><div class="s">{{ "{:,}".format(health.ws_messages or 0) }} messages</div></div>
+    <div class="card stat"><div class="k">Kalshi REST calls</div><div class="v">{{ "{:,}".format(health.rest_requests or 0) }}</div><div class="s">{{ health.rest_errors or 0 }} errors</div></div>
   </div>
   {% if health.counts %}
-  <div class="table-wrap" style="margin-top:10px"><table>
-    <thead><tr><th class="l">Table</th><th>Rows</th><th class="l">Export</th></tr></thead>
-    <tbody>{% for t, n in health.counts.items() %}<tr><td class="l">{{ t }}</td><td>{{ "{:,}".format(n) }}</td><td class="l"><a href="/api/export/{{ t }}">csv</a> · <a href="/api/export/{{ t }}?since_hours=24">24h</a></td></tr>{% endfor %}</tbody>
-  </table></div>
+  <div class="card table-wrap" style="padding:4px 8px;margin-top:12px">
+    <table>
+      <thead><tr><th>Table</th><th class="r">Rows</th><th>Export</th></tr></thead>
+      <tbody>{% for t, n in health.counts.items() %}<tr><td>{{ t }}</td><td class="r">{{ "{:,}".format(n) }}</td><td><a href="/api/export/{{ t }}" class="t2" style="text-decoration:underline">csv</a> · <a href="/api/export/{{ t }}?since_hours=24" class="t2" style="text-decoration:underline">last 24h</a></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
   {% endif %}
-  <div class="muted" style="margin-top:6px">Score events = every live-board change with the market and model at that moment. Book ticks = top of book ≤1/s per live match. Trade bars = public trades per second.</div>
+  <p class="body-10 t3">Score events = every live-board change with the market and model at that moment. Book ticks = top of book ≤1/s per live match. Trade bars = public trades per second.</p>
 </section>

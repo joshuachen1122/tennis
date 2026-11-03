@@ -53,7 +53,7 @@ async def strategy_stats(db: Database, params: dict[str, StrategyParams], bankro
     for t in trades:
         by[t.strategy].append(t)
     out = {}
-    for name in sorted(set(params) | set(by)):
+    for name in list(params) + sorted(set(by) - set(params)):
         st = _summ(by.get(name, []))
         st["equity_usd"] = bankroll_usd + st["pnl_usd"]
         st["enabled"] = params[name].enabled if name in params else False

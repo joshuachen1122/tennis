@@ -1,21 +1,20 @@
-<section id="review" class="panel">
-  <h2>LLM strategy analyst</h2>
+<section id="review" class="card panel">
   <div class="toolbar">
-    {% if editable %}<button class="ghost" hx-post="/controls/analyst" hx-target="#review" hx-swap="outerHTML" hx-indicator="#review">Run analysis now</button>{% endif %}
-    <span class="muted">Runs every few hours once enough trades have closed · LLM spend today {{ health.llm_spend_today | usd }} of {{ health.llm_budget | usd }}</span>
+    {% if editable %}<button class="btn ghost" hx-post="/controls/analyst" hx-target="#review" hx-swap="outerHTML">Run analysis now</button>{% endif %}
+    <span class="body-10 t3">Runs every few hours once enough trades have closed · LLM spend today {{ health.llm_spend_today | usd }} of {{ health.llm_budget | usd }}</span>
   </div>
-  {% if error %}<div class="warn">{{ error }}</div>{% endif %}
+  {% if error %}<p class="amber body-20">{{ error }}</p>{% endif %}
   {% if not review %}
     <div class="empty">No review yet.</div>
   {% else %}
-    <div class="muted">{{ review.ts.strftime("%Y-%m-%d %H:%M") }} UTC · {{ review.model }} · {{ review.cost | usd }}</div>
-    <p>{{ review.summary }}</p>
-    {% if review.findings %}<strong>Findings</strong><ul class="notes">{% for f in review.findings %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
-    {% if review.parameter_suggestions %}<strong>Suggested parameter changes</strong>
-      <div class="table-wrap"><table><thead><tr><th class="l">Strategy</th><th class="l">Param</th><th>Now</th><th>Suggested</th><th class="l">Why</th></tr></thead><tbody>
-      {% for p in review.parameter_suggestions %}<tr><td class="l">{{ p.strategy }}</td><td class="l">{{ p.param }}</td><td>{{ p.current }}</td><td>{{ p.suggested }}</td><td class="l" style="white-space:normal">{{ p.rationale }}</td></tr>{% endfor %}
+    <p class="body-10 t3" style="margin:0">{{ review.ts.strftime("%Y-%m-%d %H:%M") }} UTC · {{ review.model }} · {{ review.cost | usd }}</p>
+    <p style="font-size:15px">{{ review.summary }}</p>
+    {% if review.findings %}<div class="title-10">Findings</div><ul class="notes">{% for f in review.findings %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+    {% if review.parameter_suggestions %}<div class="title-10" style="margin-top:12px">Suggested parameter changes</div>
+      <div class="table-wrap"><table><thead><tr><th>Strategy</th><th>Param</th><th>Now</th><th>Suggested</th><th>Why</th></tr></thead><tbody>
+      {% for p in review.parameter_suggestions %}<tr><td>{{ p.strategy }}</td><td>{{ p.param }}</td><td>{{ p.current }}</td><td>{{ p.suggested }}</td><td style="white-space:normal">{{ p.rationale }}</td></tr>{% endfor %}
       </tbody></table></div>{% endif %}
-    {% if review.new_hypotheses %}<strong>Hypotheses to test</strong><ul class="notes">{% for h in review.new_hypotheses %}<li>{{ h }}</li>{% endfor %}</ul>{% endif %}
-    {% if review.data_gaps %}<details><summary>Data gaps</summary><ul class="notes">{% for h in review.data_gaps %}<li>{{ h }}</li>{% endfor %}</ul></details>{% endif %}
+    {% if review.new_hypotheses %}<div class="title-10" style="margin-top:12px">Hypotheses to test</div><ul class="notes">{% for h in review.new_hypotheses %}<li>{{ h }}</li>{% endfor %}</ul>{% endif %}
+    {% if review.data_gaps %}<details><summary class="emph-20 t2">Data gaps ▾</summary><ul class="notes">{% for h in review.data_gaps %}<li>{{ h }}</li>{% endfor %}</ul></details>{% endif %}
   {% endif %}
 </section>

@@ -1,0 +1,54 @@
+{# One match: Kalshi game tile with a tennis scoreboard and our paper position. Expects `g`. #}
+{% macro dur(m) %}{% if m is none %}—{% elif m < 1 %}&lt;1m{% elif m < 60 %}{{ m | round | int }}m{% else %}{{ (m // 60) | int }}h {{ (m % 60) | round | int }}m{% endif %}{% endmacro %}
+<article class="card tile {{ 'mine' if g.has_open else '' }}" data-href="/match/{{ g.event }}" data-tour="{{ g.tour }}" data-mine="{{ '1' if g.has_open else '0' }}">
+  <div class="tile-top">
+    <div class="l">
+      <span class="icon"><i></i></span>
+      <span class="overline t2 trunc">{{ g.tour }}{% if g.tournament %} · {{ g.tournament }}{% endif %}{% if g.round %} · {{ g.round }}{% endif %}</span>
+    </div>
+    {% if g.status == "live" %}<span class="when live"><span class="live-dot"></span>LIVE</span>
+    {% elif g.status == "final" %}<span class="when t3">Final</span>
+    {% elif g.scheduled %}<span class="when t2">{% if g.starts_in_min is not none and g.starts_in_min < 0 %}Due to start{% elif g.starts_in_min is not none and g.starts_in_min < 90 %}In {{ dur(g.starts_in_min) }}{% else %}{{ g.scheduled | local_time }}{% endif %}</span>{% endif %}
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+  {% for p in g.players %}
+    {% set prob = p.mid if p.mid is not none else 0 %}
+    <div class="prow">
+      <div class="pname">
+        <span class="n {{ 'win' if p.winner else '' }}"><span class="srv {{ '' if p.serving else 'off' }}" title="{{ 'serving' if p.serving else '' }}"></span><span class="trunc">{{ p.name }}</span></span>
+        <span class="bar"><i style="width: {{ prob | round | int }}%; background: var(--line-{{ p.side }})"></i></span>
+      </div>
+      <div class="score">
+        {% for s in p.sets %}<span class="{{ 'won' if s.won else ('cur' if loop.last and g.status == 'live' else '') }}">{{ s.g }}</span>{% endfor %}
+        {% if g.status == "live" %}<b>{{ p.points if p.points != "" else "·" }}</b>{% endif %}
+      </div>
+      <div class="px">
+        {% if p.model is not none and g.status == "live" %}
+          {% set gap = p.model * 100 - (p.ask or 100) %}
+          <span class="model {{ 'edge' if gap >= 3 else '' }}" title="Model win probability">model {{ "%.0f" | format(p.model * 100) }}%</span>
+        {% endif %}
+        {% if g.status == "final" %}<span class="pill-btn" style="border-color:var(--k-stroke-3)">{{ "Won" if p.winner else "—" }}</span>
+        {% else %}<a class="pill-btn" href="/match/{{ g.event }}" title="Kalshi ask for {{ p.name }}">{{ p.ask | cents }}¢</a>{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+
+  {% for t in g.trades %}
+  <div class="pos">
+    <div class="pos-line">
+      <span class="tag">{{ t.strategy }}</span>
+      <span><strong>{{ t.player }}</strong> {{ "%g" | format(t.count) }} @ {{ t.entry | cents }}¢{% if t.open %} → <span class="tab">{{ t.bid | cents }}¢</span>{% else %} → {{ t.exit | cents }}¢ <span class="t3">{{ t.exit_reason }}</span>{% endif %}</span>
+      {% set v = t.unreal if t.open else t.pnl %}
+      <span class="pl {{ 'green' if v and v > 0 else ('red' if v and v < 0 else '') }}">{% if v is not none %}{{ (v / 100) | signed_usd }}{% else %}—{% endif %}</span>
+    </div>
+    {% if t.open %}<div class="body-10 t2">If {{ t.player.split(" ")[-1] }} wins <span class="green">{{ (t.win_payout / 100) | signed_usd }}</span> · if loses <span class="red">{{ (t.loss / 100) | signed_usd }}</span> · entered at {{ t.score }}</div>{% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="tile-foot">
+    <span class="tab">{{ g.volume | vol }}{% if g.time_left %} · ~{{ dur(g.time_left.minutes) }} left{% endif %}</span>
+    <span class="trunc">{% if g.status == "live" and g.gate %}{{ g.gate }}{% elif g.status == "final" %}{{ g.final_score }}{% endif %}</span>
+  </div>
+</article>

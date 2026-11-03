@@ -1,27 +1,27 @@
-<section id="controls" class="panel wide">
-  <h2>Controls</h2>
+<section id="controls" class="card panel" style="margin-top:18px">
   <div class="toolbar">
-    <span class="pill warn">PAPER · simulated taker fills at the live ask/bid · no real orders</span>
-    {% if controls.agent_enabled %}<span class="pill good">● trading</span>{% else %}<span class="pill bad">■ stopped</span>{% endif %}
-    {% if editable %}
-      {% if controls.agent_enabled %}
-        <button class="danger" hx-post="/controls/agent" hx-vals='{"action":"stop"}' hx-target="#controls" hx-swap="outerHTML">■ Stop paper trading</button>
-      {% else %}
-        <button hx-post="/controls/agent" hx-vals='{"action":"resume"}' hx-target="#controls" hx-swap="outerHTML">▶ Resume</button>
-      {% endif %}
-      <span class="muted">Recording continues either way.</span>
-    {% endif %}
+    {% if controls.agent_enabled %}<span class="badge paper">● Paper trading on</span>{% else %}<span class="badge off">■ Stopped</span>{% endif %}
+    <span class="body-20 t2">Simulated taker fills at the live Kalshi ask/bid. No real orders exist in this app.</span>
   </div>
-  {% if editable %}<div class="muted" style="margin-bottom:10px">The buttons below ask for the dashboard password the first time.</div>{% endif %}
-  {% if error %}<div class="bad">✕ {{ error }}</div>{% endif %}
-  {% if notice %}<div class="good">✓ {{ notice }}</div>{% endif %}
+  {% if editable %}
+  <div class="toolbar">
+    {% if controls.agent_enabled %}
+      <button class="btn danger" hx-post="/controls/agent" hx-vals='{"action":"stop"}' hx-target="#controls" hx-swap="outerHTML">Stop paper trading</button>
+    {% else %}
+      <button class="btn dark" hx-post="/controls/agent" hx-vals='{"action":"resume"}' hx-target="#controls" hx-swap="outerHTML">Resume</button>
+    {% endif %}
+    <span class="body-10 t3">Recording continues either way. The browser asks for the dashboard password the first time.</span>
+  </div>
+  {% endif %}
+  {% if error %}<p class="red body-20">✕ {{ error }}</p>{% endif %}
+  {% if notice %}<p class="green body-20">✓ {{ notice }}</p>{% endif %}
   <details>
-    <summary>Strategy parameters</summary>
+    <summary class="emph-20 t2">Strategy parameters ▾</summary>
     {% if editable %}
-    <form hx-post="/controls/params" hx-target="#controls" hx-swap="outerHTML">
+    <form hx-post="/controls/params" hx-target="#controls" hx-swap="outerHTML" style="margin-top:10px">
       <textarea name="params">{{ controls.params | tojson(indent=2) }}</textarea>
-      <button type="submit" class="ghost">Save parameters</button>
+      <button type="submit" class="btn ghost" style="margin-top:8px">Save parameters</button>
     </form>
-    {% else %}<pre>{{ controls.params | tojson(indent=2) }}</pre>{% endif %}
+    {% else %}<pre class="body-10">{{ controls.params | tojson(indent=2) }}</pre>{% endif %}
   </details>
 </section>

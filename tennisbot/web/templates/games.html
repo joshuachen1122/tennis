@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Tennis · Games{% endblock %}
+{% block style %}
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+  .sum { display: flex; gap: 28px; flex-wrap: wrap; }
+  .sum .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tabs { display: flex; gap: 22px; align-items: baseline; margin-bottom: 14px; flex-wrap: wrap; }
+  .tabs button { font-family: "Barlow Condensed", sans-serif; font-size: 24px; font-weight: 600; color: var(--k-text-3); }
+  .tabs button[aria-pressed="true"] { color: var(--k-text-1); }
+  .tabs .n { font-size: 15px; margin-left: 4px; color: var(--k-text-3); }
+  .chips { display: flex; gap: 10px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(500px, 100%), 1fr)); gap: 16px; }
+  .section-h { font-family: "Barlow Condensed", sans-serif; font-size: 26px; font-weight: 600; margin: 28px 0 14px; }
+  .tile { display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 12px; cursor: pointer; transition: border-color .15s, transform .15s; }
+  .tile:hover { border-color: var(--k-stroke-2); } .tile:active { transform: scale(.995); }
+  .tile.mine { border-color: color-mix(in srgb, var(--k-blue) 55%, transparent); }
+  .tile-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tile-top .l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .icon { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--k-stroke-4); display: grid; place-items: center; flex-shrink: 0; }
+  .icon i { width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #e9f75a, #b5c92a); }
+  .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .when { font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .when.live { color: var(--k-red); display: inline-flex; gap: 6px; align-items: center; }
+  .prow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; min-height: 40px; }
+  .pname { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .pname .n { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 15px; }
+  .pname .n.win { font-weight: 700; }
+  .srv { width: 7px; height: 7px; border-radius: 50%; background: var(--k-green); flex-shrink: 0; }
+  .srv.off { background: transparent; }
+  .bar { height: 2px; border-radius: 2px; background: var(--k-fill-6); overflow: hidden; }
+  .bar i { display: block; height: 100%; min-width: 4px; border-radius: 2px; transition: width .3s; }
+  .score { display: flex; gap: 2px; font-variant-numeric: tabular-nums; font-size: 15px; align-items: center; }
+  .score span { min-width: 18px; text-align: center; color: var(--k-text-2); }
+  .score span.won { color: var(--k-text-1); font-weight: 700; }
+  .score span.cur { color: var(--k-text-1); }
+  .score b { min-width: 30px; margin-left: 6px; padding: 1px 4px; border-radius: 5px; background: var(--k-fill-6); text-align: center; font-weight: 600; color: var(--k-blue); }
+  .px { display: flex; align-items: center; gap: 12px; }
+  .px .model { font-size: 12px; color: var(--k-text-3); min-width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+  .px .model.edge { color: var(--k-green); }
+  .pos { border-radius: 12px; background: var(--k-fill-6); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .pos-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+  .pos-line .pl { margin-left: auto; font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--k-blue); }
+  .tile-foot { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--k-text-2); min-height: 22px; align-items: center; }
+  @media (max-width: 640px) { .tabs { gap: 14px; } .tabs button { font-size: 20px; } .sum { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; width: 100%; } .sum .v { font-size: 19px; } .score { font-size: 14px; } .score span { min-width: 15px; } .px .model { display: none; } .pill-btn { min-width: 64px; } }
+{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1 class="cond headline-20" style="margin:0">Tennis</h1>
+  {% include "partials/summary.html" %}
+</div>
+<div class="tabs" role="group" aria-label="Show">
+  <button data-view="live" aria-pressed="true">Live<span class="n" data-count="live">{{ G.live | length }}</span></button>
+  <button data-view="mine" aria-pressed="false">Your positions<span class="n" data-count="mine"></span></button>
+  <button data-view="upcoming" aria-pressed="false">Upcoming</button>
+  <button data-view="finished" aria-pressed="false">Finished</button>
+</div>
+<div class="chips scroll-x" role="group" aria-label="Tour">
+  <button class="chip" data-tour="all" aria-pressed="true">All</button>
+  {% for t in ["ATP", "WTA", "Challenger", "WTA 125", "ITF Men", "ITF Women"] %}<button class="chip" data-tour="{{ t }}" aria-pressed="false">{{ t }}</button>{% endfor %}
+</div>
+{% include "partials/games.html" %}
+{% endblock %}
+{% block script %}
+<script>
+  // Live / positions / upcoming / finished, and a tour filter: applied client-side so the 5s
+  // refresh keeps the reader's choice (remembered across visits).
+  let view = "live", tour = "all";
+  try { view = localStorage.getItem("gview") || "live"; tour = localStorage.getItem("gtour") || "all"; } catch {}
+  function apply() {
+    document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+    document.querySelectorAll(".chips .chip").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tour === tour)));
+    document.querySelectorAll("[data-section]").forEach((sec) => {
+      let shown = 0;
+      sec.querySelectorAll(".tile").forEach((t) => {
+        const okView = view === "mine" ? t.dataset.mine === "1" : sec.dataset.section === view;
+        const ok = okView && (tour === "all" || t.dataset.tour === tour);
+        t.hidden = !ok; if (ok) shown++;
+      });
+      sec.querySelectorAll("[data-day]").forEach((d) => { d.hidden = ![...d.querySelectorAll(".tile")].some((t) => !t.hidden); });
+      sec.hidden = shown === 0;
+    });
+    const mine = document.querySelectorAll('.tile[data-mine="1"]').length;
+    document.querySelector('[data-count="mine"]').textContent = mine || "";
+    const live = document.querySelectorAll('[data-section="live"] .tile').length;
+    document.querySelector('[data-count="live"]').textContent = live;
+    const any = [...document.querySelectorAll(".tile")].some((t) => !t.hidden);
+    const empty = document.getElementById("no-games");
+    if (empty) empty.hidden = any;
+  }
+  document.addEventListener("click", (e) => {
+    const v = e.target.closest(".tabs button"), c = e.target.closest(".chips .chip");
+    if (v) view = v.dataset.view;
+    if (c) tour = c.dataset.tour;
+    if (v || c) { try { localStorage.setItem("gview", view); localStorage.setItem("gtour", tour); } catch {} apply(); return; }
+    const tile = e.target.closest(".tile");
+    if (tile && !e.target.closest("a")) location.href = tile.dataset.href;
+  });
+  htmx.onLoad(apply);
+</script>
+{% endblock %}

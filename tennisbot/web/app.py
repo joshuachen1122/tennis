@@ -1,5 +1,6 @@
-"""HTMX dashboard: live matches with model vs market, paper performance per strategy, recorded
-data health, the LLM analyst's latest review, controls, and CSV export for research."""
+"""Match-by-match dashboard in the Kalshi / Citadel style: a Games page of match tiles (live score,
+both players' prices, the model, our paper position), a match page with the price chart and
+point-by-point log, Performance (P&L history, per-strategy stats), Lab (controls, analyst, data)."""
 
 from __future__ import annotations
 
@@ -19,7 +20,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, text
 
-from tennisbot.db import BookTick, Match, PaperTrade, ScoreEvent
+from markupsafe import Markup
+
+from tennisbot.db import PaperTrade
+from tennisbot.views import game_detail, games_view
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -54,7 +58,41 @@ def _usd(v: Any) -> str:
     return f"{'−' if v < 0 else ''}${abs(v):,.2f}"
 
 
-TEMPLATES.env.filters.update(cents=_cents, pct=_pct, usd=_usd)
+def _signed_usd(v: Any) -> str:
+    if not _num(v):
+        return "—"
+    return f"{'+' if v > 0 else ''}{_usd(v)}"
+
+
+def _vol(v: Any) -> str:
+    """Kalshi-style volume: contracts traded, e.g. "$1.2M vol"."""
+    if not _num(v) or v <= 0:
+        return "—"
+    for div, suf in ((1e6, "M"), (1e3, "K")):
+        if v >= div:
+            return f"${v / div:.1f}{suf} vol"
+    return f"${v:.0f} vol"
+
+
+def _iso(v: Any) -> str:
+    if isinstance(v, datetime):
+        return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).isoformat()
+    return ""
+
+
+def _local_time(v: Any) -> Markup:
+    if not isinstance(v, datetime):
+        return Markup("")
+    return Markup(f'<time data-local datetime="{_iso(v)}">{v.strftime("%a %H:%M UTC")}</time>')
+
+
+TEMPLATES.env.filters.update(cents=_cents, pct=_pct, usd=_usd, signed_usd=_signed_usd, vol=_vol, iso=_iso, local_time=_local_time)
+
+STRATEGY_BLURBS = {
+    "model_edge": "Buy when the Markov model beats the ask by 5¢+ between points",
+    "late_close": "Same model, only late in tight deciding sets",
+    "closer": "Back 90%+ favorites the market underprices; hold to settlement",
+}
 
 
 def create_app(engine: Any, password: Optional[str]) -> FastAPI:
@@ -69,23 +107,58 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         return await call_next(request)
 
     def ctx(**extra: Any) -> dict[str, Any]:
-        return {"stats": engine.stats, "health": engine.health, "live": engine.live_view(), "review": engine.last_review,
-                "controls": engine.controls_state(), "editable": bool(password), "positions": engine.positions_view(), **extra}
+        return {"stats": engine.stats, "health": engine.health, "review": engine.last_review,
+                "controls": engine.controls_state(), "editable": bool(password), **extra}
+
+    def page(request: Request, name: str, **extra: Any) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(request, name, ctx(**extra))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {"ok": True, "tracked": len(engine.matches), "live": engine.health.get("live"), "ws": engine.stream.connected}
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request) -> HTMLResponse:
-        return TEMPLATES.TemplateResponse(request, "index.html", ctx(pnl=await engine.pnl_series()))
+    async def games(request: Request) -> HTMLResponse:
+        return page(request, "games.html", page="games", G=await games_view(engine))
+
+    @app.get("/performance", response_class=HTMLResponse)
+    async def performance(request: Request) -> HTMLResponse:
+        async with db.session() as s:
+            closed = list((await s.execute(select(PaperTrade).where(PaperTrade.pnl.is_not(None)).order_by(PaperTrade.closed_at.desc()).limit(200))).scalars())
+        return page(request, "performance.html", page="performance", pnl=await engine.pnl_series(), closed=closed, blurbs=STRATEGY_BLURBS)
+
+    @app.get("/lab", response_class=HTMLResponse)
+    async def lab(request: Request) -> HTMLResponse:
+        return page(request, "lab.html", page="lab")
+
+    @app.get("/match/{event}", response_class=HTMLResponse)
+    async def match(request: Request, event: str) -> HTMLResponse:
+        d = await game_detail(engine, event)
+        if d is None:
+            return HTMLResponse("Match not found", status_code=404)
+        return page(request, "match.html", page="games", D=d)
+
+    @app.get("/partials/match/{event}", response_class=HTMLResponse)
+    async def match_live(request: Request, event: str) -> HTMLResponse:
+        d = await game_detail(engine, event)
+        if d is None:
+            return HTMLResponse("", status_code=404)
+        return page(request, "partials/match_live.html", D=d)
+
+    @app.get("/api/match/{event}/chart")
+    async def match_chart(event: str) -> JSONResponse:
+        d = await game_detail(engine, event)
+        return JSONResponse(d["chart"] if d else {"error": "not found"}, status_code=200 if d else 404)
 
     @app.get("/partials/{name}", response_class=HTMLResponse)
     async def partial(request: Request, name: str) -> HTMLResponse:
-        if name not in ("live", "stats", "trades", "data", "review", "controls", "positions", "pnl"):
-            return HTMLResponse("not found", status_code=404)
-        extra = {"pnl": await engine.pnl_series()} if name == "pnl" else {}
-        return TEMPLATES.TemplateResponse(request, f"partials/{name}.html", ctx(**extra))
+        if name in ("games", "summary"):
+            return page(request, f"partials/{name}.html", G=await games_view(engine))
+        if name == "pnl":
+            return page(request, "partials/pnl.html", pnl=await engine.pnl_series())
+        if name in ("data", "review", "controls"):
+            return page(request, f"partials/{name}.html")
+        return HTMLResponse("not found", status_code=404)
 
     async def form(request: Request) -> dict[str, str]:
         return {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
@@ -94,31 +167,21 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
     async def agent(request: Request) -> HTMLResponse:
         action = (await form(request)).get("action")
         await engine.set_agent_enabled(action == "resume")
-        return TEMPLATES.TemplateResponse(request, "partials/controls.html", ctx(notice=f"Agent {'resumed' if action == 'resume' else 'stopped'}."))
+        return page(request, "partials/controls.html", notice=f"Agent {'resumed' if action == 'resume' else 'stopped'}.")
 
     @app.post("/controls/params", response_class=HTMLResponse)
     async def params(request: Request) -> HTMLResponse:
         raw = (await form(request)).get("params", "")
         try:
             await engine.set_params(json.loads(raw))
-            return TEMPLATES.TemplateResponse(request, "partials/controls.html", ctx(notice="Strategy parameters saved."))
+            return page(request, "partials/controls.html", notice="Strategy parameters saved.")
         except (ValueError, TypeError) as exc:
-            return TEMPLATES.TemplateResponse(request, "partials/controls.html", ctx(error=f"Invalid parameters: {exc}"))
+            return page(request, "partials/controls.html", error=f"Invalid parameters: {exc}")
 
     @app.post("/controls/analyst", response_class=HTMLResponse)
     async def analyst(request: Request) -> HTMLResponse:
         err = await engine.maybe_run_analyst(force=True)
-        return TEMPLATES.TemplateResponse(request, "partials/review.html", ctx(error=err))
-
-    @app.get("/match/{event}", response_class=HTMLResponse)
-    async def match(request: Request, event: str) -> HTMLResponse:
-        async with db.session() as s:
-            m = await s.get(Match, event)
-            ticks = list((await s.execute(select(BookTick).where(BookTick.event_ticker == event, BookTick.live.is_(True)).order_by(BookTick.id))).scalars())
-            scores = list((await s.execute(select(ScoreEvent).where(ScoreEvent.event_ticker == event).order_by(ScoreEvent.id))).scalars())
-            trades = list((await s.execute(select(PaperTrade).where(PaperTrade.event_ticker == event).order_by(PaperTrade.id))).scalars())
-        chart = _chart(ticks, scores, trades, m)
-        return TEMPLATES.TemplateResponse(request, "match.html", {"m": m, "chart": chart, "scores": scores[-60:][::-1], "trades": trades})
+        return page(request, "partials/review.html", error=err)
 
     @app.get("/api/stats")
     async def api_stats() -> JSONResponse:
@@ -154,35 +217,3 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         return StreamingResponse(rows(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{table}.csv"'})
 
     return app
-
-
-def _chart(ticks: list, scores: list, trades: list, m: Any) -> str:
-    """Inline SVG: market mid (player A) vs model probability over the match."""
-    pts_mid = [(t.ts, (t.bid_a + t.ask_a) / 2) for t in ticks if t.bid_a is not None and t.ask_a is not None]
-    pts_model = [(s.ts, s.model_a * 100) for s in scores if s.model_a is not None]
-    allp = pts_mid + pts_model
-    if len(allp) < 2:
-        return '<div class="empty">No in-play data recorded for this match yet.</div>'
-    t0 = min(p[0] for p in allp)
-    t1 = max(p[0] for p in allp)
-    span = max((t1 - t0).total_seconds(), 1)
-    W, H, L, R, T, B = 960, 300, 40, 10, 10, 24
-
-    def x(ts: datetime) -> float:
-        return L + (ts - t0).total_seconds() / span * (W - L - R)
-
-    def y(v: float) -> float:
-        return T + (100 - v) / 100 * (H - T - B)
-
-    def poly(pts: list, cls: str) -> str:
-        return f'<polyline class="{cls}" points="{" ".join(f"{x(t):.1f},{y(v):.1f}" for t, v in pts)}"/>'
-
-    grid = "".join(f'<line class="grid" x1="{L}" x2="{W - R}" y1="{y(v):.1f}" y2="{y(v):.1f}"/><text class="tick" x="{L - 6}" y="{y(v) + 4:.1f}" text-anchor="end">{v}</text>' for v in (0, 25, 50, 75, 100))
-    marks = ""
-    for tr in trades:
-        side_a = tr.ticker == m.market_a
-        v = tr.entry_price if side_a else 100 - tr.entry_price
-        marks += f'<circle class="entry" cx="{x(tr.opened_at):.1f}" cy="{y(v):.1f}" r="5"><title>{tr.strategy} buy {tr.player} @{tr.entry_price:.0f}c</title></circle>'
-    dur = f"{span / 60:.0f} min"
-    return (f'<svg viewBox="0 0 {W} {H}" class="viz">{grid}{poly(pts_mid, "series-mid")}{poly(pts_model, "series-model")}{marks}'
-            f'<text class="tick" x="{L}" y="{H - 6}">start</text><text class="tick" x="{W - R}" y="{H - 6}" text-anchor="end">+{dur}</text></svg>')

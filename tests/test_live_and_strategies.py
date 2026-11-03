@@ -88,3 +88,33 @@ def test_sizing_and_exit():
     assert size_contracts(p, 100_000, 0.62, 54, 3) == 3
     assert should_exit(p, 0.60, 59) == "converged"
     assert should_exit(p, 0.60, 55) is None
+
+
+async def test_concurrent_evaluations_enter_once(tmp_path):
+    import asyncio
+    import time as _t
+
+    from tennisbot.db import Database, Match
+    from tennisbot.engine import Engine, MatchRT, Settings
+    from tennisbot.kalshi.client import Book
+
+    db = Database(f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    await db.init()
+    eng = Engine(Settings(llm_shadow_reviews=False), db, client=None, llm=None)  # type: ignore[arg-type]
+    row = Match(event_ticker="EV", series="KXATPMATCH", market_a="MA", market_b="MB", comp_a=A, comp_b=B, pa0=0.66, pb0=0.62)
+    rt = MatchRT(row=row)
+    eng.matches["EV"] = rt
+    rt.fmt = MatchFormat()
+    b = board([2], [2], 15, 0)
+    rt.board, rt.board_changed_at, rt.last_poll_ok = b, _t.time() - 10, _t.time()
+    eng._reprice(rt)
+    p = rt.model_a
+    ask = int(p * 100) - 8
+    for t, yes, no in (("MA", ask - 1, 100 - ask), ("MB", 100 - ask - 1, ask)):
+        bk = Book(t, {yes: 500.0}, {no: 500.0}, _t.time())
+        eng.rest_books[t] = bk
+    rt.ref_mid = rt.since_lo = rt.since_hi = ask - 0.5
+    await asyncio.gather(*(eng._evaluate(rt, _t.time()) for _ in range(5)))
+    opened = [t for t in eng.open_trades.values() if t.strategy == "model_edge"]
+    assert len(opened) == 1
+    await db.dispose()

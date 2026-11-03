@@ -109,6 +109,7 @@ class MatchRT:
     model_a: Optional[float] = None
     lev: Optional[float] = None
     mids: deque = field(default_factory=lambda: deque(maxlen=900))  # (ts, mid_a)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # one evaluation per match at a time
     first_live: float = 0.0  # when we first saw this match live (for points-per-second pace)
     ref_mid: Optional[float] = None  # mid when the board last changed
     since_lo: Optional[float] = None  # mid range since the board last changed
@@ -635,6 +636,14 @@ class Engine:
                 await self._evaluate(rt, now)
 
     async def _evaluate(self, rt: MatchRT, now: float) -> None:
+        # Book updates and the 1s timer both evaluate; without the lock two evaluations can pass
+        # the "already open" check while the first entry is still being written.
+        if rt.lock.locked():
+            return
+        async with rt.lock:
+            await self._evaluate_locked(rt, now)
+
+    async def _evaluate_locked(self, rt: MatchRT, now: float) -> None:
         rt.last_eval = now
         await self._check_exits(rt)
         gate = self._gate(rt, now)
@@ -854,30 +863,6 @@ class Engine:
             "llm_budget": self.s.llm_daily_budget_usd, "llm": self.llm is not None, "now": utcnow(),
         })
 
-    def live_view(self) -> list[dict[str, Any]]:
-        out = []
-        now = time.time()
-        for rt in self.matches.values():
-            if not rt.live or rt.final:
-                continue
-            row = rt.row
-            bid_a, _, ask_a, _ = self._bbo(row.market_a)
-            gate = self._gate(rt, now)
-            edge_a = (rt.model_a - ask_a / 100) if (rt.model_a is not None and ask_a) else None
-            bid_b, _, ask_b, _ = self._bbo(row.market_b)
-            edge_b = ((1 - rt.model_a) - ask_b / 100) if (rt.model_a is not None and ask_b) else None
-            b = rt.board
-            out.append({
-                "event": row.event_ticker, "series": row.series.replace("KX", "").replace("MATCH", ""), "tournament": row.tournament,
-                "player_a": row.player_a, "player_b": row.player_b, "sets": b.set_scores if b else [],
-                "points": f"{b.raw_points_1}-{b.raw_points_2}" if b else "", "a_serving": b.server == row.comp_a if b else None,
-                "bid_a": bid_a, "ask_a": ask_a, "model_a": rt.model_a, "edge_a": edge_a, "edge_b": edge_b, "lev": rt.lev,
-                "gate": gate or "ready", "calib": row.calib_source, "volume": rt.volume,
-                "positions": [f"{t.strategy}: {t.player} x{t.count:g} @{t.entry_price:.0f}" for t in self.open_trades.values() if t.event_ticker == row.event_ticker],
-            })
-        out.sort(key=lambda r: -(r["volume"] or 0))
-        return out
-
     def _time_left(self, rt: MatchRT) -> Optional[dict[str, Any]]:
         """Expected points left (Monte Carlo on the model) x observed seconds per point."""
         if rt.state is None or rt.fmt is None or rt.pa is None or rt.pb is None:
@@ -893,56 +878,6 @@ class Engine:
         if rt.first_live and played >= 20:  # pace over the points we have watched
             sec_per_point = min(max((time.time() - rt.first_live) / played, 25.0), 75.0)
         return {"points": pts, "minutes": pts * sec_per_point / 60}
-
-    def positions_view(self) -> dict[str, Any]:
-        """Open paper positions with everything needed to read them at a glance."""
-        rows = []
-        total_cost = total_unreal = 0.0
-        now = utcnow()
-        for t in sorted(self.open_trades.values(), key=lambda t: t.opened_at):
-            rt = self.matches.get(t.event_ticker)
-            row = rt.row if rt else None
-            side_a = bool(row and t.ticker == row.market_a)
-            bid, bid_size, ask, _ = self._bbo(t.ticker)
-            cost = t.count * t.entry_price + t.entry_fee
-            exit_fee = taker_fee_cents(t.count, bid, self.fee_rate.get(t.series, 0.07)) if bid else 0.0
-            unreal = (bid * t.count - exit_fee - cost) if bid is not None else None
-            model_now = None
-            if rt and rt.model_a is not None:
-                model_now = rt.model_a if side_a else 1 - rt.model_a
-            params = self.params.get(t.strategy)
-            if params and params.exit_on_convergence and model_now is not None:
-                plan = f"Sells when bid ≥ {max(1, round((model_now - params.exit_buffer) * 100))}¢ (model − {params.exit_buffer * 100:.0f}¢), else holds to settlement"
-            else:
-                plan = "Holds to settlement"
-            b = rt.board if rt else None
-            opp = (row.player_b if side_a else row.player_a) if row else ""
-            sets = [(a, c) if side_a else (c, a) for a, c in (b.set_scores if b else [])]  # from our player's side
-            pts = (str(b.raw_points_1), str(b.raw_points_2)) if b else ("", "")
-            if not side_a:
-                pts = (pts[1], pts[0])
-            serving = None
-            if b and b.server and row:
-                serving = "us" if (b.server == row.comp_a) == side_a else "them"
-            opened = _aware(t.opened_at)
-            started = _aware(row.started_at) if row and row.started_at else None
-            total_cost += cost
-            total_unreal += unreal or 0.0
-            rows.append({
-                "id": t.id, "strategy": t.strategy, "event": t.event_ticker, "player": t.player, "opponent": opp,
-                "tournament": row.tournament if row else "", "round": row.round if row else "", "series": t.series.replace("KX", "").replace("MATCH", ""),
-                "status": (b.status if b else (row.status if row else "")), "live": bool(rt and rt.live), "final": bool(rt and rt.final),
-                "sets": sets, "points": pts, "serving": serving, "count": t.count, "entry": t.entry_price, "cost": cost,
-                "bid": bid, "ask": ask, "bid_size": bid_size, "unreal": unreal, "unreal_per": (unreal / t.count) if unreal is not None else None,
-                "win_payout": t.count * 100 - cost, "loss": -cost, "model_entry": t.model_p, "model_now": model_now,
-                "edge_now": (model_now - bid / 100) if (model_now is not None and bid) else None,
-                "score_at_entry": t.score, "plan": plan, "held_min": (now - opened).total_seconds() / 60,
-                "match_min": (now - started).total_seconds() / 60 if started else None,
-                "saw_start": bool(row and row.calib_source == "prematch"),
-                "time_left": self._time_left(rt) if rt and rt.live else None,
-                "llm": t.llm_verdict,
-            })
-        return {"rows": rows, "cost": total_cost, "unreal": total_unreal}
 
     async def pnl_series(self) -> dict[str, Any]:
         """Realized P&L steps (one per closed trade), for the P&L history chart."""

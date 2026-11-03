@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Tennis · Lab{% endblock %}
+{% block style %}
+  h2.sec { font-family: "Barlow Condensed", sans-serif; font-size: 26px; font-weight: 600; margin: 32px 0 12px; }
+  .panel { padding: 18px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .stat { padding: 14px 16px; border-radius: 12px; }
+  .stat .k { font-size: 12px; color: var(--k-text-3); } .stat .v { font-size: 20px; font-weight: 600; margin-top: 2px; } .stat .s { font-size: 12px; color: var(--k-text-3); margin-top: 2px; }
+  ul.notes { margin: 8px 0; padding-left: 18px; } ul.notes li { margin-bottom: 6px; font-size: 14px; }
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+{% endblock %}
+{% block body %}
+<h1 class="cond headline-20" style="margin:0 0 6px">Lab</h1>
+<p class="body-20 t2" style="margin:0 0 8px;max-width:720px">Controls, the AI strategy analyst, and the research data being recorded. Viewing is open; every button asks for the dashboard password the first time.</p>
+{% include "partials/controls.html" %}
+<h2 class="sec">Strategy analyst</h2>
+{% include "partials/review.html" %}
+<h2 class="sec">Data recorder</h2>
+{% include "partials/data.html" %}
+{% endblock %}

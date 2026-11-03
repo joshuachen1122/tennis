@@ -1,29 +1,138 @@
 {% extends "base.html" %}
-{% block title %}{{ m.title if m else "Match" }}{% endblock %}
+{% block title %}{{ D.row.player_a }} vs {{ D.row.player_b }}{% endblock %}
+{% block style %}
+  .mhead { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--k-stroke-4); padding-bottom: 18px; }
+  .bigicon { width: 48px; height: 48px; border-radius: 10px; border: 1px solid var(--k-stroke-4); display: grid; place-items: center; flex-shrink: 0; }
+  .bigicon i { width: 24px; height: 24px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #e9f75a, #b5c92a); }
+  .status-line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0 20px; font-size: 13px; }
+  .board { padding: 6px 16px; margin-bottom: 22px; }
+  .board table td { border: 0; font-size: 20px; padding: 8px 6px; }
+  .board td.name { width: 100%; font-size: 17px; }
+  .board td.set { text-align: center; min-width: 34px; color: var(--k-text-2); font-variant-numeric: tabular-nums; }
+  .board td.set.won { color: var(--k-text-1); font-weight: 700; }
+  .board td.pts { text-align: center; min-width: 52px; }
+  .board td.pts b { display: inline-block; min-width: 44px; padding: 2px 6px; border-radius: 8px; background: var(--k-fill-6); color: var(--k-blue); }
+  .board .srv { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--k-green); margin-right: 8px; vertical-align: middle; }
+  .board .srv.off { background: transparent; }
+  .board tr + tr td { border-top: 1px solid var(--k-stroke-4); }
+  .chart-box { position: relative; }
+  .chart-box svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
+  .chart-box .grid { stroke: var(--k-stroke-3); stroke-dasharray: 2 4; } .chart-box .tick { fill: var(--k-text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart-box .ln { fill: none; stroke-width: 2; stroke-linejoin: round; } .chart-box .model { stroke-dasharray: 5 4; stroke-width: 1.6; opacity: .9; }
+  .chart-box .end { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chart-box .cross { stroke: var(--k-text-3); } .chart-box .entry { stroke: var(--k-surface); stroke-width: 2; }
+  .tip { position: absolute; pointer-events: none; background: var(--k-surface); border: 1px solid var(--k-stroke-3); border-radius: 10px; padding: 8px 10px; font-size: 12px; box-shadow: 0 6px 20px #0003; white-space: nowrap; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--k-text-2); margin-top: 8px; }
+  .legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+  .mrow { display: flex; align-items: center; gap: 16px; min-height: 64px; border-bottom: 1px solid var(--k-stroke-4); flex-wrap: wrap; padding: 10px 0; }
+  .mrow .nm { flex: 1; min-width: 160px; font-size: 15px; }
+  .mrow .pct { font-family: "Barlow Condensed", sans-serif; font-size: 26px; font-weight: 600; min-width: 70px; }
+  .mrow .mod { font-size: 13px; color: var(--k-text-2); min-width: 110px; }
+  .yn { display: flex; gap: 8px; }
+  .yn span { height: 40px; min-width: 96px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; }
+  .yn .y { background: var(--k-green-2); color: var(--k-green); } .yn .n { background: var(--k-red-2); color: var(--k-red); }
+  h3.sec { font-family: "Barlow Condensed", sans-serif; font-size: 24px; font-weight: 600; margin: 34px 0 12px; }
+  .trades { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 12px; }
+  .tcard { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .tcard .row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+  .kv .k { font-size: 12px; color: var(--k-text-3); } .kv .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--k-blue); }
+  .ptw { color: var(--k-text-1); font-weight: 600; }
+{% endblock %}
 {% block body %}
-<header>
-  <h1><a href="/">←</a> {{ m.player_a }} vs {{ m.player_b }}</h1>
-  <span class="sub">{{ m.tournament }} · {{ m.round }} · {{ m.fmt }} · {{ m.status }}{% if m.final_score %} · {{ m.final_score }}{% endif %}</span>
-</header>
-<main>
-  <section class="panel wide">
-    <h2>Price of {{ m.player_a }} — market vs model</h2>
-    <div class="legend"><span><i class="sw" style="background:var(--accent)"></i>Market mid</span><span><i class="sw" style="background:var(--model)"></i>Model</span><span><i class="sw" style="background:var(--good);height:8px;width:8px;border-radius:50%"></i>Paper entries</span></div>
-    {{ chart | safe }}
-    <div class="muted">Pre-match mid {{ m.prematch_mid_a | cents }}¢ · calibration {{ m.calib_source or "—" }} · serve-point priors A {{ m.pa0 }} / B {{ m.pb0 }}{% if m.result_a is not none %} · settled A = {{ m.result_a }}{% endif %}</div>
-  </section>
-  <section class="panel wide">
-    <h2>Paper trades</h2>
-    {% if not trades %}<div class="empty">None on this match.</div>{% else %}
-    <div class="table-wrap"><table><thead><tr><th class="l">Strategy</th><th class="l">Bought</th><th class="l">Score</th><th>Qty</th><th>Entry</th><th>Model</th><th>Exit</th><th class="l">Reason</th><th>PnL</th></tr></thead><tbody>
-    {% for t in trades %}<tr><td class="l">{{ t.strategy }}</td><td class="l">{{ t.player }}</td><td class="l muted">{{ t.score }}</td><td>{{ "%g"|format(t.count) }}</td><td>{{ t.entry_price | cents }}</td><td>{{ "%.1f"|format(t.model_p*100) }}</td><td>{{ t.exit_price | cents }}</td><td class="l">{{ t.exit_reason or "open" }}</td><td>{% if t.pnl is not none %}{{ (t.pnl/100) | usd }}{% else %}—{% endif %}</td></tr>{% endfor %}
-    </tbody></table></div>{% endif %}
-  </section>
-  <section class="panel wide">
-    <h2>Score log (latest first)</h2>
-    <div class="table-wrap"><table><thead><tr><th class="l">Time (UTC)</th><th class="l">Sets</th><th>Pts</th><th>Server</th><th>Bid/Ask A</th><th>Model A</th><th>Pt won by</th></tr></thead><tbody>
-    {% for s in scores %}<tr><td class="l">{{ s.ts.strftime("%H:%M:%S") }}</td><td class="l">{{ s.set_scores }}</td><td>{{ s.points_a }}-{{ s.points_b }}</td><td>{{ "A" if s.a_serving else ("B" if s.a_serving == false else "—") }}</td><td>{{ s.bid_a | cents }}/{{ s.ask_a | cents }}</td><td>{% if s.model_a is not none %}{{ "%.1f"|format(s.model_a*100) }}{% else %}—{% endif %}</td><td>{{ {1: "A", 2: "B"}.get(s.point_winner, "") }}</td></tr>{% endfor %}
-    </tbody></table></div>
-  </section>
-</main>
+{% set g = D.g %}
+<div class="mhead">
+  <span class="bigicon"><i></i></span>
+  <div style="min-width:0">
+    <a href="/" class="overline t3">Tennis · {{ g.tour }}{% if g.tournament %} · {{ g.tournament }}{% endif %}{% if g.round %} · {{ g.round }}{% endif %}</a>
+    <h1 class="cond headline-10" style="margin:0">{{ D.row.player_a }} vs {{ D.row.player_b }}</h1>
+  </div>
+</div>
+<div id="live-part" hx-get="/partials/match/{{ g.event }}" hx-trigger="every 4s" hx-swap="outerHTML">{% include "partials/match_live.html" %}</div>
+
+<section style="margin-top:8px">
+  <div class="chart-box" id="chart" data-src="/api/match/{{ g.event }}/chart"></div>
+  <div class="legend"><span><i style="border-color:var(--line-a)"></i>{{ D.row.player_a }} (market)</span><span><i style="border-color:var(--line-b)"></i>{{ D.row.player_b }} (market)</span><span><i style="border-color:var(--line-a);border-top-style:dashed"></i>Model, {{ D.row.player_a }}</span><span>● our entries</span></div>
+</section>
+
+<h3 class="sec">Point by point</h3>
+<div class="card table-wrap" style="padding:4px 8px">
+  <table>
+    <thead><tr><th>Time</th><th>Sets</th><th class="r">Points</th><th>Serving</th><th>Point to</th><th class="r">Market {{ D.row.player_a.split(" ")[-1] }}</th><th class="r">Model</th></tr></thead>
+    <tbody>
+    {% for e in D.log %}<tr>
+      <td><time data-local="clock" datetime="{{ e.ts.isoformat() }}">{{ e.ts.strftime("%H:%M:%S") }}</time></td>
+      <td>{{ e.sets }}</td><td class="r">{{ e.pts }}</td>
+      <td>{{ D.row.player_a if e.server == "a" else (D.row.player_b if e.server == "b" else "—") }}</td>
+      <td class="ptw">{{ D.row.player_a if e.winner == 1 else (D.row.player_b if e.winner == 2 else "") }}</td>
+      <td class="r">{% if e.mid is not none %}{{ "%.1f" | format(e.mid) }}¢{% else %}—{% endif %}</td>
+      <td class="r">{% if e.model is not none %}{{ "%.1f" | format(e.model * 100) }}%{% else %}—{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="7" class="empty">No points recorded yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="body-10 t3" style="margin-top:10px">Pre-match mid {{ D.row.prematch_mid_a | cents }}¢ · calibration {{ D.row.calib_source or "pending" }} · serve-point priors {{ D.row.pa0 or "—" }} / {{ D.row.pb0 or "—" }} · format {{ D.row.fmt or "—" }} · <a class="t2" href="https://kalshi.com/markets/{{ D.row.series | lower }}" target="_blank" rel="noreferrer" style="text-decoration:underline">Kalshi market</a></p>
+{% endblock %}
+{% block script %}
+<script>
+  // Probability chart in Kalshi's style (as in Citadel's KalshiChart): thin lines with an end
+  // label in each line's colour, dotted gridlines, a crosshair whose tooltip names every series.
+  const SVG = "http://www.w3.org/2000/svg";
+  const el = (t, a, p) => { const e = document.createElementNS(SVG, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); if (p) p.appendChild(e); return e; };
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  let hovering = false;
+  function at(points, t) { let lo = 0, hi = points.length - 1, best = null; while (lo <= hi) { const m = (lo + hi) >> 1; if (points[m][0] <= t) { best = points[m]; lo = m + 1; } else hi = m - 1; } return best; }
+  function draw(box, d) {
+    const W = Math.max(box.clientWidth, 320), H = 300, L = 8, R = 120, T = 14, B = 26;
+    const A = d.mid_a, Bline = A.map(([t, v]) => [t, 100 - v]), M = d.model_a;
+    const all = [...A, ...M];
+    if (all.length < 2) { box.innerHTML = '<div class="empty">No price history recorded for this match yet.</div>'; return; }
+    const t0 = Math.min(...all.map((p) => p[0]));
+    const t1 = Math.max(...all.map((p) => p[0]), Date.now() < t0 ? t0 + 1 : Math.min(Date.now(), Math.max(...all.map((p) => p[0])) + 60e3));
+    const x = (t) => L + (t - t0) / Math.max(t1 - t0, 1) * (W - L - R), y = (v) => T + (100 - v) / 100 * (H - T - B);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Match win probability over time" });
+    for (const v of [0, 25, 50, 75, 100]) { el("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }, svg); el("text", { class: "tick", x: W - R + 6, y: y(v) + 4 }, svg).textContent = `${v}%`; }
+    const fmt = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    [[t0, "start"], [(t0 + t1) / 2, "middle"], [t1, "end"]].forEach(([t, a]) => { el("text", { class: "tick", x: Math.min(Math.max(x(t), L), W - R), y: H - 6, "text-anchor": a }, svg).textContent = fmt(t); });
+    const path = (pts) => pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const series = [
+      { pts: A, color: css("--line-a"), name: d.a, cls: "ln" },
+      { pts: Bline, color: css("--line-b"), name: d.b, cls: "ln" },
+      { pts: M, color: css("--line-a"), name: `Model · ${d.a}`, cls: "ln model" },
+    ];
+    for (const s of series) if (s.pts.length) el("path", { class: s.cls, d: path(s.pts), stroke: s.color }, svg);
+    const ends = series.slice(0, 2).filter((s) => s.pts.length).map((s) => ({ s, v: s.pts[s.pts.length - 1][1] }));
+    ends.sort((a, b) => b.v - a.v);
+    let lastY = -99;
+    for (const e of ends) {
+      const last = e.s.pts[e.s.pts.length - 1];
+      el("circle", { cx: x(last[0]), cy: y(last[1]), r: 4, fill: e.s.color }, svg);
+      let ly = Math.max(y(e.v) + 4, lastY + 15); lastY = ly;
+      el("text", { class: "end", x: x(last[0]) + 8, y: ly, fill: e.s.color }, svg).textContent = `${e.s.name.split(" ").slice(-1)[0]} ${e.v.toFixed(0)}%`;
+    }
+    for (const en of d.entries) { const c = el("circle", { class: "entry", cx: x(en.t), cy: y(en.p), r: 6, fill: css("--k-green") }, svg); el("title", {}, c).textContent = en.label; }
+    const cross = el("line", { class: "cross", y1: T, y2: H - B, visibility: "hidden" }, svg);
+    box.replaceChildren(svg);
+    const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width;
+      if (px < L || px > W - R) { leave(); return; }
+      hovering = true;
+      const t = t0 + (px - L) / (W - L - R) * (t1 - t0);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+      const rows = series.map((s) => { const p = at(s.pts, t); return p ? `<div><span style="color:${s.color}">●</span> ${s.name}: <b>${p[1].toFixed(1)}%</b></div>` : ""; }).join("");
+      tip.innerHTML = `<div class="t3">${new Date(t).toLocaleTimeString()}</div>${rows}`;
+      tip.hidden = false;
+      const left = px * r.width / W; tip.style.left = `${Math.min(left + 12, r.width - 200)}px`; tip.style.top = "8px";
+    };
+    const leave = () => { hovering = false; cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
+    svg.addEventListener("pointermove", move); svg.addEventListener("pointerdown", move); svg.addEventListener("pointerleave", leave);
+  }
+  const box = document.getElementById("chart");
+  let data = null;
+  async function pull() { if (hovering) return; try { data = await (await fetch(box.dataset.src, { cache: "no-store" })).json(); draw(box, data); } catch {} }
+  pull(); setInterval(pull, 15000);
+  window.addEventListener("resize", () => data && draw(box, data));
+</script>
 {% endblock %}

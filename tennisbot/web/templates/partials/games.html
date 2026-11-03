@@ -1,0 +1,17 @@
+<div id="games" hx-get="/partials/games" hx-trigger="every 5s" hx-swap="outerHTML">
+  <section data-section="live">
+    <div class="grid">{% for g in G.live %}{% include "partials/tile.html" %}{% endfor %}</div>
+  </section>
+  <section data-section="upcoming">
+    {% for day, games in G.upcoming_days %}
+    <div data-day>
+      <h2 class="section-h">{{ day }}</h2>
+      <div class="grid">{% for g in games %}{% include "partials/tile.html" %}{% endfor %}</div>
+    </div>
+    {% endfor %}
+  </section>
+  <section data-section="finished">
+    <div class="grid">{% for g in G.finished %}{% include "partials/tile.html" %}{% endfor %}</div>
+  </section>
+  <p id="no-games" class="empty" hidden>Nothing here right now. Matches with Kalshi markets appear as soon as they open; finished shows the last 24h of matches we traded.</p>
+</div>

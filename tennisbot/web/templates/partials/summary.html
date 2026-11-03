@@ -1,0 +1,7 @@
+{% set S = G.summary %}
+<div id="summary" class="sum" hx-get="/partials/summary" hx-trigger="every 5s" hx-swap="outerHTML">
+  <div><div class="overline t3">Open positions</div><div class="v">{{ S.open }}</div></div>
+  <div><div class="overline t3">At risk</div><div class="v">{{ (S.at_risk / 100) | usd }}</div></div>
+  <div><div class="overline t3">Unrealized</div><div class="v {{ 'green' if S.unreal > 0 else ('red' if S.unreal < 0 else '') }}">{{ (S.unreal / 100) | signed_usd }}</div></div>
+  <div><div class="overline t3">Realized · 24h</div><div class="v {{ 'green' if S.realized_24h > 0 else ('red' if S.realized_24h < 0 else '') }}">{{ (S.realized_24h / 100) | signed_usd }}</div></div>
+</div>

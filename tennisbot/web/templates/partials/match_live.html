@@ -1,0 +1,60 @@
+{% set g = D.g %}
+{% macro dur(m) %}{% if m is none %}—{% elif m < 1 %}&lt;1m{% elif m < 60 %}{{ m | round | int }}m{% else %}{{ (m // 60) | int }}h {{ (m % 60) | round | int }}m{% endif %}{% endmacro %}
+<div id="live-part" hx-get="/partials/match/{{ g.event }}" hx-trigger="every 4s" hx-swap="outerHTML">
+  <div class="status-line">
+    {% if g.status == "live" %}<span class="red" style="display:inline-flex;gap:6px;align-items:center;font-weight:600"><span class="live-dot"></span>Live</span>
+      {% if g.time_left %}<span class="t2">· ~{{ dur(g.time_left.minutes) }} left (≈{{ g.time_left.points | round | int }} points)</span>{% endif %}
+      {% if g.gate %}<span class="t3">· {{ g.gate }}</span>{% endif %}
+    {% elif g.status == "final" %}<span class="t2" style="font-weight:600">Final</span>{% if g.final_score %}<span class="t3">· {{ g.final_score }}</span>{% endif %}
+    {% elif g.scheduled %}<span>Begins <time data-local datetime="{{ g.scheduled.isoformat() }}">{{ g.scheduled.strftime("%b %-d %H:%M UTC") }}</time></span>{% endif %}
+    <span class="t3">· {{ g.volume | vol }}</span>
+  </div>
+
+  <div class="card board">
+    <table>
+      {% for p in g.players %}
+      <tr>
+        <td class="name {{ 'ptw' if p.winner else '' }}"><span class="srv {{ '' if p.serving else 'off' }}"></span>{{ p.name }}</td>
+        {% for s in p.sets %}<td class="set {{ 'won' if s.won else '' }}">{{ s.g }}</td>{% endfor %}
+        {% if g.status == "live" %}<td class="pts"><b>{{ p.points if p.points != "" else "·" }}</b></td>{% endif %}
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <section style="border-top:1px solid var(--k-stroke-4)">
+    {% for p in g.players %}
+    <div class="mrow">
+      <span class="nm">{{ p.name }}</span>
+      <span class="pct">{% if p.mid is not none %}{{ p.mid | round | int }}%{% else %}—{% endif %}</span>
+      <span class="mod">{% if p.model is not none %}model {{ "%.1f" | format(p.model * 100) }}%{% endif %}</span>
+      <span class="yn"><span class="y">Yes {{ p.ask | cents }}¢</span><span class="n">No {% if p.bid is not none %}{{ 100 - p.bid }}{% else %}—{% endif %}¢</span></span>
+    </div>
+    {% endfor %}
+  </section>
+
+  <h3 class="sec">Your trades in this match</h3>
+  {% if not g.trades %}
+    <div class="card empty">No paper trades on this match{% if g.status == "live" and g.gate %} — {{ g.gate | lower }}{% endif %}.</div>
+  {% else %}
+  <div class="trades">
+    {% for t in g.trades %}
+    {% set v = t.unreal if t.open else t.pnl %}
+    <article class="card tcard">
+      <div class="row"><span class="tag">{{ t.strategy }}</span><span class="body-10 {{ 'green' if t.open else 't3' }}">{{ "OPEN" if t.open else (t.exit_reason | upper) }}</span></div>
+      <div class="row"><span class="title-10">{{ t.player }}</span><span class="title-20 {{ 'green' if v and v > 0 else ('red' if v and v < 0 else '') }}">{% if v is not none %}{{ (v / 100) | signed_usd }}{% else %}—{% endif %}</span></div>
+      <div class="kv">
+        <div><div class="k">Bought</div><div class="v">{{ "%g" | format(t.count) }} @ {{ t.entry | cents }}¢</div><div class="body-10 t3">{{ (t.cost / 100) | usd }} incl. fee</div></div>
+        <div><div class="k">{{ "Bid now" if t.open else "Exit" }}</div><div class="v">{{ (t.bid if t.open else t.exit) | cents }}¢</div><div class="body-10 t3">{% if t.mark_10s is not none %}+10s {{ t.mark_10s | cents }}¢{% endif %}{% if t.mark_60s is not none %} · +60s {{ t.mark_60s | cents }}¢{% endif %}</div></div>
+        <div><div class="k">Model at entry</div><div class="v">{{ "%.1f" | format(t.model_entry * 100) }}%</div><div class="body-10 t3">edge {{ "%.1f" | format(t.edge * 100) }}¢</div></div>
+        <div><div class="k">{{ "If wins / loses" if t.open else "Opened" }}</div>
+          {% if t.open %}<div class="v"><span class="green">{{ (t.win_payout / 100) | signed_usd }}</span> / <span class="red">{{ (t.loss / 100) | signed_usd }}</span></div>
+          {% else %}<div class="v"><time data-local="clock" datetime="{{ t.opened.isoformat() }}">{{ t.opened.strftime("%H:%M") }}</time></div>{% endif %}</div>
+      </div>
+      <div class="body-10 t2">Entered at {{ t.score }}</div>
+      {% if t.llm %}<div class="body-10"><strong>LLM shadow: {{ "take" if t.llm.take else "skip" }}</strong> ({{ "%.0f" | format(t.llm.probability * 100) }}%) <span class="t2">{{ t.llm.reasoning }}</span></div>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
