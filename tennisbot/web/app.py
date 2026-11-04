@@ -213,6 +213,7 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         if mem_cache.get("at", 0) > time.time() - 60:
             return JSONResponse(mem_cache["out"])
         import gc
+        import sys
         from collections import Counter
 
         status = {}
@@ -223,8 +224,19 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
                     status[k] = v.strip()
         except OSError:
             pass
-        types = Counter(type(o).__name__ for o in gc.get_objects())
-        out = {"proc": status, "top_types": types.most_common(20), "containers": engine.memory_report()}
+        objs = gc.get_objects()
+        types = Counter(type(o).__name__ for o in objs)
+        sized = sorted(((len(o), o) for o in objs if isinstance(o, (list, dict, set, bytearray)) or type(o).__name__ == "deque"),
+                       key=lambda x: -x[0])[:12]
+        largest = []
+        for n, o in sized:
+            first = next(iter(o), None)
+            owners = [type(r).__name__ for r in gc.get_referrers(o) if r is not objs and r is not sized][:3]
+            largest.append({"type": type(o).__name__, "len": n, "first": repr(first)[:80], "owners": owners})
+        del objs, sized
+        out = {"proc": status, "top_types": types.most_common(20), "largest": largest, "containers": engine.memory_report(),
+               "uptime_s": round(time.time() - engine.health["started"].timestamp()),
+               "py_blocks": sys.getallocatedblocks()}
         mem_cache.update(at=time.time(), out=out)
         return JSONResponse(out)
 
