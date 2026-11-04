@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     milestone_sec: float = 180.0
     live_poll_sec: float = 1.0
     cold_poll_sec: float = 30.0
+    stream_prematch_min: float = 20.0  # subscribe to a match's WebSocket books this long before its start
     rest_book_sec: float = 2.0  # REST top-of-book refresh when the WebSocket is down
     flush_sec: float = 2.0
     settle_sec: float = 30.0
@@ -358,7 +359,9 @@ class Engine:
             if rt.final:
                 continue
             sched = rt.row.scheduled
-            soon = sched is None or sched - timedelta(hours=3) <= now
+            # Pre-match books only shortly before the start: they were most of the ~1,600 messages/s that
+            # pinned the shared CPU (93% steal, 2026-11-04). REST still refreshes every book.
+            soon = sched is None or sched - timedelta(minutes=self.s.stream_prematch_min) <= now
             if rt.live or soon:
                 out.update(t for t in (rt.row.market_a, rt.row.market_b) if t)
         return out
@@ -1025,7 +1028,7 @@ class Engine:
         if cache and cache[0] == rt.board_key:
             pts = cache[1]
         else:
-            pts = remaining_points(rt.pa, rt.pb, rt.state, rt.fmt, sims=200)
+            pts = remaining_points(rt.pa, rt.pb, rt.state, rt.fmt, sims=50)  # display only; 200 sims cost ~80ms
             rt._tl_cache = (rt.board_key, pts)  # type: ignore[attr-defined]
         played = rt.played_a + rt.played_b
         sec_per_point = DEFAULT_SEC_PER_POINT

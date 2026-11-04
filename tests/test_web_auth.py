@@ -71,3 +71,26 @@ def test_pages_render_and_controls_need_password(engine):
     assert c.post("/controls/agent", data={"action": "stop"}, auth=("", "wrong")).status_code == 401
     assert c.post("/controls/agent", data={"action": "stop"}, auth=("", "secret")).status_code == 200
     assert not engine.agent_enabled
+
+
+async def test_stream_unsubscribes_markets_it_no_longer_wants():
+    from tennisbot.kalshi.client import MarketStream
+
+    sent = []
+
+    class WS:
+        async def send(self, raw):
+            import json
+
+            sent.append(json.loads(raw))
+
+    st = MarketStream(client=None, on_book=lambda t: None, on_trade=lambda m: None)  # type: ignore[arg-type]
+    st._ws, st.connected = WS(), True
+    st._sids = {"orderbook_delta": 1, "trade": 2}
+    await st.set_tickers({"A", "B"})
+    st.book("A"), st.book("B")
+    sent.clear()
+    await st.set_tickers({"B", "C"})
+    actions = {(m["params"]["action"], tuple(m["params"]["market_tickers"]), m["params"]["sids"][0]) for m in sent}
+    assert actions == {("add_markets", ("C",), 1), ("add_markets", ("C",), 2), ("delete_markets", ("A",), 1), ("delete_markets", ("A",), 2)}
+    assert st._subscribed == {"B", "C"} and "A" not in st.books

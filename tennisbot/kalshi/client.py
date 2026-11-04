@@ -256,6 +256,20 @@ class MarketStream:
             add = sorted(self.wanted - self._subscribed)
             if add:
                 await self._subscribe(add)
+            drop = sorted(self._subscribed - self.wanted)
+            if drop:
+                await self._unsubscribe(drop)
+
+    async def _unsubscribe(self, tickers: list[str]) -> None:
+        """Stop streaming markets we no longer need (finished, or not yet close to the start)."""
+        for i in range(0, len(tickers), 200):
+            chunk = tickers[i : i + 200]
+            for ch in ("orderbook_delta", "trade"):
+                if ch in self._sids:
+                    await self._send("update_subscription", {"sids": [self._sids[ch]], "market_tickers": chunk, "action": "delete_markets"})
+            self._subscribed.difference_update(chunk)
+            for t in chunk:
+                self.books.pop(t, None)  # a dropped book would go stale; REST takes over
 
     async def _send(self, cmd: str, params: dict[str, Any]) -> None:
         self._cmd_id += 1

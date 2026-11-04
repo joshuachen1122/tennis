@@ -156,11 +156,17 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         d = await game_detail(engine, event)
         return JSONResponse(d["chart"] if d else {"error": "not found"}, status_code=200 if d else 404)
 
+    view_cache: dict[tuple[str, str], tuple[float, Any]] = {}
+
     @app.get("/partials/{name}", response_class=HTMLResponse)
     async def partial(request: Request, name: str) -> HTMLResponse:
         if name in ("games", "summary"):
             q = request.query_params
-            return page(request, f"partials/{name}.html", G=await games_view(engine, q.get("view", "mine"), q.get("tour", "all")))
+            key = (q.get("view", "mine"), q.get("tour", "all"))
+            hit = view_cache.get(key)
+            if hit is None or hit[0] < time.time() - 3:  # every open tab polls both partials; build once per 3s
+                hit = view_cache[key] = (time.time(), await games_view(engine, *key))
+            return page(request, f"partials/{name}.html", G=hit[1])
         if name == "pnl":
             return page(request, "partials/pnl.html", pnl=await engine.pnl_series())
         if name in ("data", "review", "controls"):
