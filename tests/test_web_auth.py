@@ -94,3 +94,23 @@ async def test_stream_unsubscribes_markets_it_no_longer_wants():
     actions = {(m["params"]["action"], tuple(m["params"]["market_tickers"]), m["params"]["sids"][0]) for m in sent}
     assert actions == {("add_markets", ("C",), 1), ("add_markets", ("C",), 2), ("delete_markets", ("A",), 1), ("delete_markets", ("A",), 2)}
     assert st._subscribed == {"B", "C"} and "A" not in st.books
+
+
+async def test_stream_coalesces_book_callbacks():
+    from tennisbot.kalshi.client import MarketStream
+
+    seen: list[str] = []
+    st = MarketStream(client=None, on_book=lambda t: seen.append(t), on_trade=lambda m: None)  # type: ignore[arg-type]
+    snap = {"type": "orderbook_snapshot", "sid": 1, "seq": 1,
+            "msg": {"market_ticker": "T", "yes_dollars_fp": [["0.4100", "10"]], "no_dollars_fp": [["0.5700", "5"]]}}
+    await st._handle(snap)
+    assert st.books["T"].bbo() == (41, 10.0, 43, 5.0)
+    for seq, price in ((2, "0.4200"), (3, "0.4300")):
+        await st._handle({"type": "orderbook_delta", "sid": 1, "seq": seq,
+                          "msg": {"market_ticker": "T", "price_dollars": price, "delta_fp": "3", "side": "yes"}})
+    assert seen == []  # nothing until the drain
+    assert st.books["T"].bbo()[0] == 43  # the cached top of book was refreshed by the deltas
+    await st.drain()
+    assert seen == ["T"]
+    await st.drain()
+    assert seen == ["T"]

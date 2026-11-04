@@ -33,6 +33,18 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 EXPORT_TABLES = {"matches", "score_events", "book_ticks", "trade_bars", "paper_trades", "signals", "llm_notes"}
 
 
+GC_STATS = {"seconds": [0.0, 0.0, 0.0], "runs": [0, 0, 0], "_t": 0.0}
+
+
+def _gc_timer(phase: str, info: dict) -> None:
+    if phase == "start":
+        GC_STATS["_t"] = time.perf_counter()
+    else:
+        g = info.get("generation", 0)
+        GC_STATS["seconds"][g] += time.perf_counter() - GC_STATS["_t"]
+        GC_STATS["runs"][g] += 1
+
+
 def _password_ok(header: Optional[str], password: str) -> bool:
     if not header or not header.lower().startswith("basic "):
         return False
@@ -102,6 +114,10 @@ STRATEGY_BLURBS = {
 def create_app(engine: Any, password: Optional[str]) -> FastAPI:
     app = FastAPI(title="Tennis Kalshi Agent")
     db = engine.db
+    import gc
+
+    if _gc_timer not in gc.callbacks:
+        gc.callbacks.append(_gc_timer)
 
     @app.middleware("http")
     async def auth(request: Request, call_next: Any) -> Response:
@@ -249,7 +265,10 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
                                   "growth": [{"kb": round(d.size_diff / 1e3), "n": d.count_diff,
                                               "at": [f"{f.filename.split('site-packages/')[-1]}:{f.lineno}" for f in d.traceback]}
                                              for d in diff]}
-        out = {"proc": status, "top_types": types.most_common(20), "largest": largest, "containers": engine.memory_report(),
+        cpu = time.process_time()
+        up = time.time() - engine.health["started"].timestamp()
+        out = {"proc": status, "cpu_s": round(cpu), "cpu_pct_of_uptime": round(100 * cpu / max(up, 1), 1),
+               "gc": {"seconds": [round(x, 1) for x in GC_STATS["seconds"]], "runs": GC_STATS["runs"]}, "top_types": types.most_common(20), "largest": largest, "containers": engine.memory_report(),
                "uptime_s": round(time.time() - engine.health["started"].timestamp()),
                "py_blocks": sys.getallocatedblocks(), "trace": mem_cache.get("trace")}
         mem_cache.update(at=time.time(), out=out)

@@ -15,7 +15,6 @@ import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -175,7 +174,7 @@ class KalshiClient:
 
 
 def _cents(price: Any) -> int:
-    return int(Decimal(str(price)) * 100)
+    return int(round(float(price) * 100))
 
 
 @dataclass
@@ -184,12 +183,15 @@ class Book:
     yes: dict[int, float] = field(default_factory=dict)  # yes bids: cents -> size
     no: dict[int, float] = field(default_factory=dict)  # no bids
     updated: float = 0.0  # unix seconds
+    _top: Optional[tuple] = field(default=None, repr=False, compare=False)  # cached bbo(), cleared on change
 
     def bbo(self) -> tuple[Optional[int], float, Optional[int], float]:
         """(yes_bid, bid_size, yes_ask, ask_size); the yes ask is 100 - best no bid."""
-        yb = max(self.yes) if self.yes else None
-        nb = max(self.no) if self.no else None
-        return (yb, self.yes.get(yb, 0.0) if yb else 0.0, (100 - nb) if nb else None, self.no.get(nb, 0.0) if nb else 0.0)
+        if self._top is None:
+            yb = max(self.yes) if self.yes else None
+            nb = max(self.no) if self.no else None
+            self._top = (yb, self.yes.get(yb, 0.0) if yb else 0.0, (100 - nb) if nb else None, self.no.get(nb, 0.0) if nb else 0.0)
+        return self._top
 
     def ask_depth(self, max_price: int) -> float:
         """Yes contracts available at or below ``max_price`` cents."""
@@ -201,6 +203,7 @@ class Book:
     def snapshot(self, msg: dict[str, Any]) -> None:
         self.yes = {_cents(p): float(q) for p, q in (msg.get("yes_dollars_fp") or msg.get("yes_dollars") or []) if float(q) > 0}
         self.no = {_cents(p): float(q) for p, q in (msg.get("no_dollars_fp") or msg.get("no_dollars") or []) if float(q) > 0}
+        self._top = None
         self.updated = time.time()
 
     def delta(self, msg: dict[str, Any]) -> None:
@@ -212,6 +215,7 @@ class Book:
             side[price] = q
         else:
             side.pop(price, None)
+        self._top = None
         self.updated = time.time()
 
     def set_from_rest(self, m: dict[str, Any]) -> None:
@@ -219,6 +223,7 @@ class Book:
         yb, ya = dollars(m.get("yes_bid_dollars")), dollars(m.get("yes_ask_dollars"))
         self.yes = {round(yb * 100): dollars(m.get("yes_bid_size_fp")) or 0.0} if yb else {}
         self.no = {100 - round(ya * 100): dollars(m.get("yes_ask_size_fp")) or 0.0} if ya and ya < 1 else {}
+        self._top = None
         self.updated = time.time()
 
 
@@ -244,6 +249,10 @@ class MarketStream:
         self.connected = False
         self.messages = 0
         self.last_message = 0.0
+        # Book callbacks are coalesced: each changed ticker is handled at most once per ``coalesce_sec``
+        # rather than on every delta (~1,500/s), which kept the shared CPU throttled. 0 = call on every message.
+        self.coalesce_sec = 0.25
+        self._dirty: dict[str, None] = {}
 
     def book(self, ticker: str) -> Book:
         if ticker not in self.books:
@@ -305,10 +314,15 @@ class MarketStream:
                     self.connected = True
                     backoff = 1.0
                     await self._subscribe(sorted(self.wanted))
-                    async for raw in ws:
-                        if stop.is_set():
-                            break
-                        await self._handle(json.loads(raw))
+                    drainer = asyncio.create_task(self._drain_loop()) if self.coalesce_sec > 0 else None
+                    try:
+                        async for raw in ws:
+                            if stop.is_set():
+                                break
+                            await self._handle(json.loads(raw))
+                    finally:
+                        if drainer:
+                            drainer.cancel()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - reconnect on anything
@@ -316,6 +330,7 @@ class MarketStream:
             finally:
                 self.connected = False
                 self._ws = None
+                self._dirty.clear()
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
@@ -341,12 +356,34 @@ class MarketStream:
         ticker = msg.get("market_ticker")
         if typ == "orderbook_snapshot" and ticker:
             self.book(ticker).snapshot(msg)
-            await _maybe_await(self._on_book(ticker))
+            await self._changed(ticker)
         elif typ == "orderbook_delta" and ticker:
             self.book(ticker).delta(msg)
-            await _maybe_await(self._on_book(ticker))
+            await self._changed(ticker)
         elif typ == "trade" and ticker:
             await _maybe_await(self._on_trade(msg))
+
+
+    async def _changed(self, ticker: str) -> None:
+        if self.coalesce_sec > 0:
+            self._dirty[ticker] = None
+        else:
+            await _maybe_await(self._on_book(ticker))
+
+    async def drain(self) -> None:
+        """Run the book callback once for every ticker that changed since the last drain."""
+        dirty, self._dirty = self._dirty, {}
+        for ticker in dirty:
+            if ticker in self.books:
+                try:
+                    await _maybe_await(self._on_book(ticker))
+                except Exception:  # noqa: BLE001 - one bad book must not stop the stream
+                    logger.exception("book callback failed for %s", ticker)
+
+    async def _drain_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.coalesce_sec)
+            await self.drain()
 
 
 async def _maybe_await(x: Any) -> None:
