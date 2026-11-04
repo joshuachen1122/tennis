@@ -252,6 +252,10 @@ class MarketStream:
         # Book callbacks are coalesced: each changed ticker is handled at most once per ``coalesce_sec``
         # rather than on every delta (~1,500/s), which kept the shared CPU throttled. 0 = call on every message.
         self.coalesce_sec = 0.25
+        # "ticker" sends the top of book (best bid/ask and sizes) only when it changes; "orderbook_delta"
+        # sends every change at every level (~2,000 msgs/s across live tennis, over the shared-CPU quota).
+        # The engine only ever reads the top of book.
+        self.book_channel = "ticker"
         self._dirty: dict[str, None] = {}
 
     def book(self, ticker: str) -> Book:
@@ -273,7 +277,7 @@ class MarketStream:
         """Stop streaming markets we no longer need (finished, or not yet close to the start)."""
         for i in range(0, len(tickers), 200):
             chunk = tickers[i : i + 200]
-            for ch in ("orderbook_delta", "trade"):
+            for ch in (self.book_channel, "trade"):
                 if ch in self._sids:
                     await self._send("update_subscription", {"sids": [self._sids[ch]], "market_tickers": chunk, "action": "delete_markets"})
             self._subscribed.difference_update(chunk)
@@ -287,10 +291,11 @@ class MarketStream:
     async def _subscribe(self, tickers: list[str]) -> None:
         for i in range(0, len(tickers), 200):
             chunk = tickers[i : i + 200]
-            if "orderbook_delta" in self._sids:
-                await self._send("update_subscription", {"sids": [self._sids["orderbook_delta"]], "market_tickers": chunk, "action": "add_markets"})
+            ch = self.book_channel
+            if ch in self._sids:
+                await self._send("update_subscription", {"sids": [self._sids[ch]], "market_tickers": chunk, "action": "add_markets"})
             else:
-                await self._send("subscribe", {"channels": ["orderbook_delta"], "market_tickers": chunk})
+                await self._send("subscribe", {"channels": [ch], "market_tickers": chunk})
             if "trade" in self._sids:
                 await self._send("update_subscription", {"sids": [self._sids["trade"]], "market_tickers": chunk, "action": "add_markets"})
             else:
@@ -354,7 +359,12 @@ class MarketStream:
                 raise RuntimeError(f"sequence gap on sid {sid}: {prev} -> {seq}")
         msg = m.get("msg") or {}
         ticker = msg.get("market_ticker")
-        if typ == "orderbook_snapshot" and ticker:
+        if typ == "ticker" and ticker:
+            if "yes_bid_dollars" not in msg or "yes_ask_dollars" not in msg:
+                return  # not a full top of book; keep what we have
+            self.book(ticker).set_from_rest(msg)  # same top-of-book fields as a REST market
+            await self._changed(ticker)
+        elif typ == "orderbook_snapshot" and ticker:
             self.book(ticker).snapshot(msg)
             await self._changed(ticker)
         elif typ == "orderbook_delta" and ticker:

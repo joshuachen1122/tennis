@@ -664,7 +664,8 @@ class Engine:
         if now - rt.board_changed_at < self.s.quiet_sec:
             return "score_not_quiet"
         b = self.book(rt.row.market_a)
-        if b is None or now - b.updated > (30 if self.stream.connected else 8):
+        # The ticker stream only sends a market when its top of book changes, so a quiet book can be old.
+        if b is None or now - b.updated > (300 if self.stream.connected else 8):
             return "book_stale"
         window = [m for t, m in rt.mids if t >= now - self.s.quiet_sec]
         if rt.mids:

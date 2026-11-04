@@ -86,7 +86,7 @@ async def test_stream_unsubscribes_markets_it_no_longer_wants():
 
     st = MarketStream(client=None, on_book=lambda t: None, on_trade=lambda m: None)  # type: ignore[arg-type]
     st._ws, st.connected = WS(), True
-    st._sids = {"orderbook_delta": 1, "trade": 2}
+    st._sids = {"ticker": 1, "trade": 2}
     await st.set_tickers({"A", "B"})
     st.book("A"), st.book("B")
     sent.clear()
@@ -101,6 +101,12 @@ async def test_stream_coalesces_book_callbacks():
 
     seen: list[str] = []
     st = MarketStream(client=None, on_book=lambda t: seen.append(t), on_trade=lambda m: None)  # type: ignore[arg-type]
+    await st._handle({"type": "ticker", "sid": 3, "seq": 1, "msg": {"market_ticker": "K", "yes_bid_dollars": "0.6100", "yes_ask_dollars": "0.6300",
+                                                                   "yes_bid_size_fp": "120.00", "yes_ask_size_fp": "45.00"}})
+    assert st.books["K"].bbo() == (61, 120.0, 63, 45.0)
+    await st.drain()
+    assert seen == ["K"]
+    seen.clear()
     snap = {"type": "orderbook_snapshot", "sid": 1, "seq": 1,
             "msg": {"market_ticker": "T", "yes_dollars_fp": [["0.4100", "10"]], "no_dollars_fp": [["0.5700", "5"]]}}
     await st._handle(snap)
