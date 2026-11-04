@@ -92,6 +92,20 @@ def main(base: str) -> None:
     for (s, k), (n, w, p, u) in sorted(cf.items()):
         print(f"  {s:10} {k:14} resolved {n:3}  won {w / (n or 1) * 100:5.1f}%  pnl ${p:8.2f}  (unresolved {u})")
 
+    # Fade: when the reviewer's probability is well below the price, would the *other* side have paid?
+    # Other side's ask is approximated as 100 - ask + 1 (a 1c spread).
+    fade = [0, 0, 0.0]
+    for g in gate:
+        v, y = g.get("verdict") or {}, won(g["event_ticker"], g["ticker"])
+        if y is None or "probability" not in v or v["probability"] > g["ask"] / 100 - 0.05:
+            continue
+        other = 100 - g["ask"] + 1
+        fade[0] += 1
+        fade[1] += 1 - y
+        fade[2] += (g["count"] * (100 * (1 - y) - other) - fee(g["count"], other)) / 100
+    if fade[0]:
+        print(f"  fade (LLM prob >=5c under the ask -> buy the other side): resolved {fade[0]}  won {fade[1]}  pnl ${fade[2]:.2f}")
+
     # ------------------------------------------------------------ 4. accuracy
     rows = []
     for g in gate:

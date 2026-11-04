@@ -21,7 +21,7 @@ from tennisbot.archive import archive_days
 from tennisbot.db import BookTick, Database, LLMNote, Match, PaperTrade, ScoreEvent, Signal, TradeBar, utcnow
 from tennisbot.kalshi.client import Book, KalshiAPIError, KalshiClient, MarketStream, dollars
 from tennisbot.llm import LLM
-from tennisbot.model.live import SERVE_TOTALS, LiveBoard, infer_format, parse_board, point_winner, to_state
+from tennisbot.model.live import LIVE_STATUSES, SERVE_TOTALS, LiveBoard, infer_format, parse_board, point_winner, to_state
 from tennisbot.model.markov import MatchFormat, ScoreState, leverage, remaining_points, solve_serve_split, win_prob
 from tennisbot.strategies import (
     DEFAULT_PARAMS,
@@ -203,7 +203,35 @@ class Engine:
                     m.pa0 = m.pb0 = None
                     m.calib_source = ""
                 self._add_rt(m)
+            await self._restore_match_history(s)
         logger.info("restored %d open paper trades, %d matches", len(self.open_trades), len(self.matches))
+
+    async def _restore_match_history(self, s: Any) -> None:
+        """Rebuild what a restart would otherwise forget: the serve points each player has won (the
+        model's in-match update) and the entries per strategy per match. Without this every deploy
+        reset in-progress matches to their pre-match serve rates; replaying 34 settled matches,
+        that alone took the model from level with the market (Brier 0.1337 vs 0.1339) to 0.1413."""
+        events = set(self.matches)
+        if not events:
+            return
+        prev: dict[str, Optional[bool]] = {}
+        rows = await s.execute(select(ScoreEvent.event_ticker, ScoreEvent.a_serving, ScoreEvent.point_winner, ScoreEvent.status)
+                               .where(ScoreEvent.event_ticker.in_(events)).order_by(ScoreEvent.id))
+        for ev, a_serving, pw, status in rows:
+            rt = self.matches[ev]
+            server = prev.get(ev)
+            if pw is not None and server is not None:
+                if server:
+                    rt.played_a += 1
+                    rt.won_a += pw == 1
+                else:
+                    rt.played_b += 1
+                    rt.won_b += pw == 2
+            prev[ev] = a_serving if status in LIVE_STATUSES else None
+        rows = await s.execute(select(PaperTrade.event_ticker, PaperTrade.strategy).where(
+            PaperTrade.event_ticker.in_(events), PaperTrade.closed_at.is_not(None)))
+        for ev, strat in rows:
+            self.matches[ev].entries[strat] += 1
 
     def _add_rt(self, m: Match) -> MatchRT:
         for attr in ("scheduled", "started_at", "ended_at", "first_seen"):  # SQLite hands back naive datetimes

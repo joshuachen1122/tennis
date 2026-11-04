@@ -222,3 +222,26 @@ async def test_one_position_per_match_across_strategies(tmp_path):
     assert eng._position_block(rt, "closer", DEFAULT_PARAMS["closer"], _t.time()) == "match_held"
     assert eng._position_block(rt, "model_edge", DEFAULT_PARAMS["model_edge"], _t.time()) == "already_open"
     await db.dispose()
+
+
+async def test_restart_keeps_serve_points_and_entries(tmp_path):
+    from tennisbot.db import Database, Match, PaperTrade, ScoreEvent, utcnow
+    from tennisbot.engine import Engine, Settings
+
+    db = Database(f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    await db.init()
+    rows = [Match(event_ticker="EV", series="KXATPMATCH", market_a="MA", market_b="MB", comp_a=A, comp_b=B, pa0=0.66, pb0=0.62,
+                  calib_source="prematch", status="live", first_seen=utcnow())]
+    # Each point belongs to the server shown *before* it: A serves three (wins one; B breaks on the
+    # third, so B serves next), then B serves one and wins it. The first row has no predecessor.
+    for a_serving, pw in ((True, None), (True, 1), (True, 2), (False, 2), (False, 2)):
+        rows.append(ScoreEvent(event_ticker="EV", status="live", a_serving=a_serving, point_winner=pw))
+    rows.append(PaperTrade(strategy="closer", event_ticker="EV", ticker="MA", count=1, entry_price=90, entry_fee=0,
+                           model_p=0.95, edge=0.03, closed_at=utcnow(), exit_price=100, pnl=10))
+    await db.add_all(rows)
+    eng = Engine(Settings(llm_shadow_reviews=False), db, client=None, llm=None)  # type: ignore[arg-type]
+    await eng.restore()
+    rt = eng.matches["EV"]
+    assert (rt.won_a, rt.played_a, rt.won_b, rt.played_b) == (1, 3, 1, 1)
+    assert rt.entries["closer"] == 1
+    await db.dispose()
