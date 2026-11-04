@@ -17,7 +17,7 @@ reuse its patterns.
   (fail closed); gate verdicts are `llm_notes` rows with kind="gate". Score them with
   `scripts/gate_report.py`.
 - The Markov model adds nothing to the market price out of sample, and model-driven underdog buys lose
-  (research/06). `favourite` (v4) prices off the market alone (`market_slope`). Replay fair-value
+  (research/06). `favourite` (v4) prices off the market alone (`market_slope`); it failed its live test and is off by default. Replay fair-value
   rules with `scripts/fair_value_replay.py <db>`.
 - Paper only: there is no order-placement code. Adding live trading needs explicit user approval,
   spend caps and a kill switch, as in Fifteen.

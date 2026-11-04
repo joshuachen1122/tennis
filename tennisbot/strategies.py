@@ -84,7 +84,9 @@ DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # v4 experiment: in-play favourites are underpriced. Market mids fit a slope of ~1.5 on 73
     # settled matches (cross-validated); 1.4 is shrunk toward no effect. The replay was about
     # break-even after fees, so this is a prospective test, not a proven edge. One entry, held.
-    "favourite": StrategyParams(min_edge=0.02, min_price=55, max_price=90, market_slope=1.4, exit_on_convergence=False,
+    # Retired 2026-11-04 15:30 UTC: on 148 settled live entries the slope re-fit to 1.0 [0.74, 1.37]
+    # and P&L was -3.5c/contract (research/06). Off by default; turn it on from the dashboard to re-test.
+    "favourite": StrategyParams(enabled=False, min_edge=0.02, min_price=55, max_price=90, market_slope=1.4, exit_on_convergence=False,
                                 max_entries_per_match=1, min_match_volume=10_000),
 }
 

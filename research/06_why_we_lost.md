@@ -104,3 +104,29 @@ Win rate by the side's mid at quiet moments, each match weighted equally:
   interval, compared with buying the same favourite at the same moment with no fair-value filter.
 - **Calibration:** re-fit b on matches recorded after today. If the interval includes 1, retire the
   strategy.
+
+## Result: `favourite` retired (2026-11-04 15:30 UTC)
+
+Live paper results from 03:00 to 15:17 UTC on Nov 4:
+
+- 195 entries, 148 settled across 143 matches, all held to settlement.
+- 73% won at an average entry of 75¢.
+- −$116.80 after $52 of fees, or **−3.5¢ per contract**. The match-bootstrap 90% interval is [−9.7¢, +3.1¢].
+
+Win rate by entry price:
+
+| Entry | Trades | Won | Avg entry |
+|---|---|---|---|
+| 55–65¢ | 43 | 60% | 63¢ |
+| 65–75¢ | 41 | 63% | 69¢ |
+| 75–85¢ | 29 | 83% | 80¢ |
+| 85–90¢ | 35 | 91% | 89¢ |
+
+- The slope re-fitted on these entries, using logit of the ask paid, is **b = 1.00** with a 90% interval of
+  [0.74, 1.37]. That includes 1 and excludes the in-sample 1.54. By the rule set above, the strategy is retired.
+- The in-sample bias did not hold up prospectively, which matches the unstable split-half fits (0.98 vs 2.5).
+- Caveat: the VM was CPU-throttled for parts of the day, so some books (and therefore paper fills) lagged real
+  time.
+- How it was switched off:
+  - Disabled on the dashboard at 15:30 UTC.
+  - The code default is now `enabled=False`, so the next `PARAMS_VERSION` bump keeps it off.

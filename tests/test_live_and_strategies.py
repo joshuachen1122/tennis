@@ -78,7 +78,9 @@ def test_blend_shrinks_toward_mid():
 
 
 def test_favourite_prices_off_the_market_not_the_model():
-    p = DEFAULT_PARAMS["favourite"]
+    from dataclasses import replace
+
+    p = replace(DEFAULT_PARAMS["favourite"], enabled=True)
     assert abs(fair_prob(0.5, 74, 75, p) - 0.8176) < 1e-3  # sigmoid(1.4 * logit(0.745)); the model is ignored
     assert fair_prob(0.9, None, 75, p) is None
     assert abs(fair_prob(0.5, 49, 51, p) - 0.5) < 1e-9  # a coin flip stays a coin flip
