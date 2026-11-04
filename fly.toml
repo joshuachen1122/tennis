@@ -20,6 +20,8 @@ swap_size_mb = 512
   LOG_LEVEL = "INFO"
   # Fewer glibc malloc arenas: the database worker threads otherwise fragment memory on the 512MB VM.
   MALLOC_ARENA_MAX = "2"
+  # TEMPORARY (2026-11-04): trace allocations to find the memory growth; remove once found.
+  PYTHONTRACEMALLOC = "3"
   LLM_MODEL = "claude-opus-5-5"
   LLM_DAILY_BUDGET_USD = "1.0"
   # 24h LLM-gate experiment (research/04): $5/day cap until this time, then back to $1/day.

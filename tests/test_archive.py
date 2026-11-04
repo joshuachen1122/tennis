@@ -24,3 +24,33 @@ def test_archive_moves_old_days_to_gzip(tmp_path):
     assert rows[0] == ["id", "ts", "v"] and len(rows) == 3
     assert list_archives(db)[0]["day"] == "2026-11-01"
     assert archive_days(db, keep_days=2, today=date(2026, 11, 4)) == []  # idempotent
+
+
+async def test_read_then_write_sessions_do_not_fail_with_locked(tmp_path):
+    """Two sessions that each read a row and then update it, interleaved. With deferred
+    transactions the second update failed at once with 'database is locked' (SQLITE_BUSY_SNAPSHOT)."""
+    import asyncio
+
+    from tennisbot.db import Database, Setting
+
+    db = Database(f"sqlite+aiosqlite:///{tmp_path}/t.db")
+    await db.init()
+    await db.set_setting("k", "0")
+    first_read = asyncio.Event()
+
+    async def bump(wait: bool) -> None:
+        async with db.session() as s:
+            row = await s.get(Setting, "k")
+            first_read.set()
+            if wait:
+                await asyncio.sleep(0.2)  # the other session writes and commits meanwhile
+            row.value = str(int(row.value) + 1)
+            await s.commit()
+
+    async def second() -> None:
+        await first_read.wait()
+        await bump(False)
+
+    await asyncio.gather(bump(True), second())
+    assert await db.get_setting("k") == "2"  # neither update was lost
+    await db.dispose()

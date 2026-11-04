@@ -3,16 +3,22 @@ them with ``scripts/export.py``."""
 
 from __future__ import annotations
 
+import logging
+import sys
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text, event, select, text
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -180,10 +186,24 @@ class Setting(Base):
 class Database:
     def __init__(self, url: str) -> None:
         self.url = url
+        # Sessions write, so their transactions start with BEGIN IMMEDIATE: a deferred transaction
+        # that reads and then writes fails at once with "database is locked" (SQLITE_BUSY_SNAPSHOT)
+        # when another connection committed in between, without waiting on the busy timeout.
+        # Long streaming reads (CSV export, counts) use `read_engine` so they never hold the write lock.
         self.engine: AsyncEngine = create_async_engine(url)
+        self.read_engine: AsyncEngine = create_async_engine(url) if url.startswith("sqlite") else self.engine
         if url.startswith("sqlite"):
-            event.listen(self.engine.sync_engine, "connect", _pragmas)
-        self.session = async_sessionmaker(self.engine, expire_on_commit=False)
+            event.listen(self.engine.sync_engine, "connect", _write_pragmas)
+            event.listen(self.engine.sync_engine, "begin", _begin_immediate)
+            event.listen(self.read_engine.sync_engine, "connect", _pragmas)
+        self._sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    def session(self) -> AsyncSession:
+        """A new session, tagged with its caller so slow write transactions can be named."""
+        s = self._sessions()
+        f = sys._getframe(1)
+        s.sync_session.info["caller"] = f"{f.f_code.co_name}:{f.f_lineno}"
+        return s
 
     async def init(self) -> None:
         async with self.engine.begin() as conn:
@@ -213,13 +233,38 @@ class Database:
 
     async def counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
-        async with self.engine.connect() as conn:
+        async with self.read_engine.connect() as conn:
             for t in ("matches", "score_events", "book_ticks", "trade_bars", "paper_trades", "signals", "llm_notes"):
                 out[t] = (await conn.execute(text(f"SELECT COUNT(*) FROM {t}"))).scalar_one()
         return out
 
     async def dispose(self) -> None:
         await self.engine.dispose()
+        if self.read_engine is not self.engine:
+            await self.read_engine.dispose()
+
+
+def _write_pragmas(conn: Any, rec: Any) -> None:
+    _pragmas(conn, rec)
+    conn.isolation_level = None  # let SQLAlchemy's "begin" event issue BEGIN IMMEDIATE itself
+
+
+def _begin_immediate(conn: Any) -> None:
+    conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+
+@event.listens_for(Session, "after_begin")
+def _tx_started(session: Session, _tx: Any, _conn: Any) -> None:
+    session.info["tx_started"] = time.monotonic()
+
+
+@event.listens_for(Session, "after_commit")
+@event.listens_for(Session, "after_rollback")
+def _tx_ended(session: Session, *_: Any) -> None:
+    """Each session holds SQLite's write lock for its whole transaction: name the slow ones."""
+    started = session.info.pop("tx_started", None)
+    if started is not None and time.monotonic() - started > 2.0:
+        logger.warning("write lock held %.1fs by %s", time.monotonic() - started, session.info.get("caller", "?"))
 
 
 def _pragmas(conn: Any, _rec: Any) -> None:

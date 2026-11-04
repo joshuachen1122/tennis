@@ -231,12 +231,21 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         largest = []
         for n, o in sized:
             first = next(iter(o), None)
-            owners = [type(r).__name__ for r in gc.get_referrers(o) if r is not objs and r is not sized][:3]
-            largest.append({"type": type(o).__name__, "len": n, "first": repr(first)[:80], "owners": owners})
+            largest.append({"type": type(o).__name__, "len": n, "first": repr(first)[:80]})
         del objs, sized
+        import tracemalloc
+
+        if tracemalloc.is_tracing():  # PYTHONTRACEMALLOC=n: growth by allocation site since the first reading
+            snap = tracemalloc.take_snapshot().filter_traces([tracemalloc.Filter(False, tracemalloc.__file__)])
+            base = mem_cache.setdefault("base", snap)
+            diff = snap.compare_to(base, "traceback")[:8]
+            mem_cache["trace"] = {"traced_mb": round(tracemalloc.get_traced_memory()[0] / 1e6, 1),
+                                  "growth": [{"kb": round(d.size_diff / 1e3), "n": d.count_diff,
+                                              "at": [f"{f.filename.split('site-packages/')[-1]}:{f.lineno}" for f in d.traceback]}
+                                             for d in diff]}
         out = {"proc": status, "top_types": types.most_common(20), "largest": largest, "containers": engine.memory_report(),
                "uptime_s": round(time.time() - engine.health["started"].timestamp()),
-               "py_blocks": sys.getallocatedblocks()}
+               "py_blocks": sys.getallocatedblocks(), "trace": mem_cache.get("trace")}
         mem_cache.update(at=time.time(), out=out)
         return JSONResponse(out)
 
@@ -253,7 +262,7 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
             params["since"] = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).replace(tzinfo=None).isoformat(" ")
 
         async def rows():
-            async with db.engine.connect() as conn:
+            async with db.read_engine.connect() as conn:
                 result = await conn.stream(text(f"SELECT * FROM {table}{where}"), params)
                 buf = io.StringIO()
                 w = csv.writer(buf)
