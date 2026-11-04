@@ -131,7 +131,7 @@ async def games_view(engine: "Engine", view: str = "mine", tour: str = "all") ->
     view = view if view in VIEWS else "mine"
     since = utcnow() - timedelta(hours=24)
     now = utcnow()
-    async with engine.db.session() as s:
+    async with engine.db.read_session() as s:
         closed = list((await s.execute(select(PaperTrade).where(PaperTrade.closed_at.is_not(None), PaperTrade.opened_at >= since))).scalars())
         finished_rows: dict[str, Match] = {}
         if view == "finished" and closed:
@@ -215,7 +215,7 @@ def summary_view(engine: "Engine", closed_24h: list[PaperTrade]) -> dict[str, An
 async def game_detail(engine: "Engine", event: str) -> Optional[dict[str, Any]]:
     from tennisbot.engine import MatchRT
 
-    async with engine.db.session() as s:
+    async with engine.db.read_session() as s:
         row = await s.get(Match, event)
         if row is None:
             return None

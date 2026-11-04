@@ -1035,7 +1035,7 @@ class Engine:
 
     async def pnl_series(self) -> dict[str, Any]:
         """Realized P&L steps (one per closed trade), for the P&L history chart."""
-        async with self.db.session() as s:
+        async with self.db.read_session() as s:
             res = await s.execute(select(PaperTrade.closed_at, PaperTrade.pnl, PaperTrade.player, PaperTrade.strategy, PaperTrade.exit_reason, PaperTrade.opened_at)
                                   .where(PaperTrade.pnl.is_not(None)).order_by(PaperTrade.closed_at))
             closed = res.all()

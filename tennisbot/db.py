@@ -197,6 +197,7 @@ class Database:
             event.listen(self.engine.sync_engine, "begin", _begin_immediate)
             event.listen(self.read_engine.sync_engine, "connect", _pragmas)
         self._sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.read_session = async_sessionmaker(self.read_engine, expire_on_commit=False)  # never takes the write lock
 
     def session(self) -> AsyncSession:
         """A new session, tagged with its caller so slow write transactions can be named."""

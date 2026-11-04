@@ -47,7 +47,7 @@ def _summ(trades: list[PaperTrade]) -> dict[str, Any]:
 
 
 async def strategy_stats(db: Database, params: dict[str, StrategyParams], bankroll_usd: float) -> dict[str, Any]:
-    async with db.session() as s:
+    async with db.read_session() as s:
         trades = list((await s.execute(select(PaperTrade).order_by(PaperTrade.id.desc()).limit(5000))).scalars())
     by: dict[str, list[PaperTrade]] = defaultdict(list)
     for t in trades:
@@ -68,7 +68,7 @@ async def strategy_stats(db: Database, params: dict[str, StrategyParams], bankro
 
 async def build_report(db: Database, params: dict[str, StrategyParams]) -> dict[str, Any]:
     """Everything the analyst needs, aggregated (no raw rows)."""
-    async with db.session() as s:
+    async with db.read_session() as s:
         trades = list((await s.execute(select(PaperTrade))).scalars())
         matches = {m.event_ticker: m for m in (await s.execute(select(Match).where(Match.result_a.is_not(None)))).scalars()}
         events = list((await s.execute(
