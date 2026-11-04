@@ -19,7 +19,10 @@ from typing import Literal
 
 FinalSet = Literal["tb7", "tb10", "mtb10"]
 
-_CACHE = 400_000
+# Per-function memo size. One win_prob call touches a few thousand states; serve rates change
+# with every point, so old entries are rarely reused. 400k per function filled ~350MB and swapped
+# the 512MB VM every ~3h (2026-11-04).
+_CACHE = 30_000
 
 
 @dataclass(frozen=True)
