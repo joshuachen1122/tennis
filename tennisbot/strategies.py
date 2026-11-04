@@ -88,6 +88,11 @@ DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # and P&L was -3.5c/contract (research/06). Off by default; turn it on from the dashboard to re-test.
     "favourite": StrategyParams(enabled=False, min_edge=0.02, min_price=55, max_price=90, market_slope=1.4, exit_on_convergence=False,
                                 max_entries_per_match=1, min_match_volume=10_000),
+    # Paper market making (tennisbot/maker.py): rest bids on both players, collect the spread when both
+    # fill. No model. min_edge = the gap the two opening bids must leave below 100c (2c);
+    # max_entries_per_match = completed pairs per match; max_stake_usd = per leg.
+    "maker": StrategyParams(min_edge=0.02, min_price=10, max_price=90, exit_on_convergence=False, max_stake_usd=10.0,
+                            max_entries_per_match=10, min_match_volume=10_000),
 }
 
 
@@ -155,7 +160,7 @@ def net_edge(model_p: float, ask: int) -> float:
 
 def evaluate(name: str, params: StrategyParams, s: Snapshot) -> list[Intent]:
     """Return candidate entries (with ``skip`` set for near-misses worth logging)."""
-    if not params.enabled:
+    if not params.enabled or name == "maker":  # the maker quotes; it never takes (engine._maker_step)
         return []
     out: list[Intent] = []
     st = s.state

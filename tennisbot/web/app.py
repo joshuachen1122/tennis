@@ -107,7 +107,8 @@ STRATEGY_BLURBS = {
     "model_edge": "Buy when the model, half-blended with the market, beats the ask by 3¢+; LLM-gated",
     "late_close": "Same model, only late in tight deciding sets",
     "closer": "Back 90%+ favorites the market underprices; hold to settlement",
-    "favourite": "Market price only, stretched toward the favorite (slope 1.4); hold to settlement",
+    "favourite": "Market price only, stretched toward the favorite (slope 1.4); retired",
+    "maker": "Paper limit orders: rest bids on both players, lock the spread when both fill",
 }
 
 

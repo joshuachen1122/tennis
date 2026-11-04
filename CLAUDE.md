@@ -19,6 +19,8 @@ reuse its patterns.
 - The Markov model adds nothing to the market price out of sample, and model-driven underdog buys lose
   (research/06). `favourite` (v4) prices off the market alone (`market_slope`); it failed its live test and is off by default. Replay fair-value
   rules with `scripts/fair_value_replay.py <db>`.
+- `maker` (tennisbot/maker.py) simulates resting limit bids on both players, filled from public trade
+  prints behind the visible queue (research/07). Its legs don't count toward the one-position rule.
 - Paper only: there is no order-placement code. Adding live trading needs explicit user approval,
   spend caps and a kill switch, as in Fifteen.
 - Research tables are append-only. Export them via `/api/export/{table}`.

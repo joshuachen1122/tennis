@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import logging
 import time
 from collections import defaultdict, deque
@@ -21,6 +22,7 @@ from tennisbot.archive import archive_days
 from tennisbot.db import BookTick, Database, LLMNote, Match, PaperTrade, ScoreEvent, Signal, TradeBar, utcnow
 from tennisbot.kalshi.client import Book, KalshiAPIError, KalshiClient, MarketStream, dollars
 from tennisbot.llm import LLM
+from tennisbot.maker import MakerState, Quote, desired_prices, maker_fee_cents, quote_price
 from tennisbot.model.live import LIVE_STATUSES, SERVE_TOTALS, LiveBoard, infer_format, parse_board, point_winner, to_state
 from tennisbot.model.markov import MatchFormat, ScoreState, leverage, remaining_points, solve_serve_split, win_prob
 from tennisbot.strategies import (
@@ -169,6 +171,7 @@ class Engine:
         self.trade_agg: dict[tuple[str, int], list[float]] = {}
         self.marks: list[tuple[float, int, str]] = []  # (due_ts, trade_id, column)
         self.fee_rate: dict[str, float] = {}
+        self.maker: dict[str, MakerState] = {}  # event -> resting paper quotes and filled legs
         self.llm_spend_today = 0.0
         self.llm_day = utcnow().date()
         self.stats: dict[str, Any] = {}
@@ -631,6 +634,11 @@ class Engine:
         a[3] += qty * price
         a[4] = max(a[4], price)
         a[5] = min(a[5], price)
+        st = self.maker.get(self.market_event[ticker])
+        if st is not None:
+            for q in st.quotes.values():
+                if q.ticker == ticker:
+                    st.add_fill(q, q.on_trade(price, qty, side))
 
     async def flush(self, force: bool = False) -> None:
         cutoff = int(time.time()) - (0 if force else 2)
@@ -695,6 +703,112 @@ class Engine:
         for rt in list(self.matches.values()):
             if rt.live and not rt.final and now - rt.last_eval >= 0.9:
                 await self._evaluate(rt, now)
+        for ev in [ev for ev, _ in self.maker.items() if not (self.matches.get(ev) and self.matches[ev].live and not self.matches[ev].final)]:
+            await self._maker_close(ev)
+
+    # ------------------------------------------------------------------ paper market making
+
+    async def _maker_step(self, rt: MatchRT, now: float, gate: Optional[str]) -> None:
+        """Keep paper bids resting on both players while the match is quiet; pull them otherwise."""
+        params, row = self.params.get("maker"), rt.row
+        ev = row.event_ticker
+        st = self.maker.get(ev)
+        books = [self.stream.books.get(t) for t in (row.market_a, row.market_b)]
+        ok = (params is not None and params.enabled and self.agent_enabled and gate in (None, "wide_spread")
+              and rt.volume >= params.min_match_volume and self.stream.connected and all(b is not None and b.updated for b in books))
+        if st is None:
+            if not ok:
+                return
+            st = self.maker[ev] = MakerState()
+        for q in list(st.quotes.values()):
+            bid, bid_size, ask, _ = self._bbo(q.ticker)
+            st.add_fill(q, q.on_top(bid, bid_size, ask))
+        await self._maker_record(rt, st)
+        if st.complete():
+            for side in list(st.quotes):
+                await self._maker_cancel(rt, st, side)
+            logger.info("PAPER MAKER pair %s: a %.0f @ %.1fc + b %.0f @ %.1fc", ev, st.legs["a"].qty, st.legs["a"].avg,
+                        st.legs["b"].qty, st.legs["b"].avg)
+            st = self.maker[ev] = MakerState(cycles=st.cycles + 1, fills=st.fills)
+        if not ok or st.cycles >= params.max_entries_per_match:  # type: ignore[union-attr]
+            for side in list(st.quotes):
+                await self._maker_cancel(rt, st, side)
+            return
+        bid_a, bsz_a, ask_a, _ = self._bbo(row.market_a)
+        bid_b, bsz_b, ask_b, _ = self._bbo(row.market_b)
+        if st.target <= 0:
+            pa, pb = quote_price(bid_a, ask_a), quote_price(bid_b, ask_b)
+            if pa is None or pb is None:
+                return
+            stake = min(params.max_stake_usd * 100, max(0.0, self.bankroll_cents("maker")) / 2)  # type: ignore[union-attr]
+            st.target = float(int(stake // max(pa, pb)))
+            if st.target < 1:
+                st.target = 0.0
+                return
+        want = desired_prices(bid_a, ask_a, bid_b, ask_b, st, params.min_price, params.max_price,  # type: ignore[union-attr]
+                              round(params.min_edge * 100))  # type: ignore[union-attr]
+        for side, ticker, bid, bsz, ask in (("a", row.market_a, bid_a, bsz_a, ask_a), ("b", row.market_b, bid_b, bsz_b, ask_b)):
+            p, q = want[side], st.quotes.get(side)
+            other = st.legs["b" if side == "a" else "a"]
+            if q is not None:
+                capped = other.qty > 0 and q.price > math.floor(100 - other.avg - 1)
+                if p is not None and (p == q.price or (p < q.price and not capped)):
+                    continue  # unchanged, or the market fell below us and our bid is now the best
+                await self._maker_cancel(rt, st, side)
+            if p is None or bid is None:
+                continue
+            size = st.target - st.legs[side].qty
+            if size < 1:
+                continue
+            queue = bsz if p == bid else (0.0 if p > bid else math.inf)
+            st.quotes[side] = Quote(side, ticker, p, size, queue, now, context={
+                "bid": bid, "ask": ask, "bid_size": bsz, "other_bid": bid_b if side == "a" else bid_a,
+                "other_ask": ask_b if side == "a" else ask_a, "queue_ahead": None if math.isinf(queue) else queue,
+                "posted_at": now, "cycle": st.cycles, "target": st.target, "score": self._score_text(rt)})
+
+    async def _maker_cancel(self, rt: MatchRT, st: MakerState, side: str) -> None:
+        await self._maker_record(rt, st, final=True, only=side)
+        st.quotes.pop(side, None)
+
+    async def _maker_record(self, rt: MatchRT, st: MakerState, final: bool = False, only: Optional[str] = None) -> None:
+        """Write filled paper contracts as trades: whole contracts as they fill, the rest when the quote ends."""
+        for side, q in list(st.quotes.items()):
+            if only is not None and side != only:
+                continue
+            new = q.filled - q.recorded
+            if new <= 1e-9 or (new < 1 and not final and q.remaining > 0):
+                continue
+            q.recorded = q.filled
+            row = rt.row
+            other = st.legs["b" if side == "a" else "a"]
+            mid = self._mid_a(rt)
+            p_side = None if mid is None else (mid if side == "a" else 100 - mid) / 100
+            ctx = {**self._context(rt, side), **q.context, "strategy": "maker", "params_version": PARAMS_VERSION,
+                   "filled_at": time.time(), "other_leg_qty": other.qty, "other_leg_avg": round(other.avg, 2)}
+            trade = PaperTrade(
+                strategy="maker", event_ticker=row.event_ticker, ticker=q.ticker, series=row.series,
+                player=row.player_a if side == "a" else row.player_b, count=round(new, 2), entry_price=q.price,
+                entry_fee=maker_fee_cents(new, q.price, self.fee_rate.get(row.series, 0.07)),
+                model_p=round(p_side, 4) if p_side is not None else 0.0,
+                edge=round((100 - q.price - (other.avg if other.qty else (q.context.get("other_bid") or 100))) / 100, 4),
+                leverage=rt.lev, score=self._score_text(rt), context=ctx,
+            )
+            async with self.db.session() as s:
+                s.add(trade)
+                await s.commit()
+                await s.refresh(trade)
+            self.open_trades[trade.id] = trade
+            t = time.time()
+            self.marks += [(t + 10, trade.id, "mark_10s"), (t + 60, trade.id, "mark_60s")]
+            logger.info("PAPER MAKER fill %s x%.2f @ %dc | %s", trade.player, new, q.price, trade.score)
+
+    async def _maker_close(self, ev: str) -> None:
+        st = self.maker.pop(ev, None)
+        rt = self.matches.get(ev)
+        if st is None or rt is None:
+            return
+        for side in list(st.quotes):
+            await self._maker_cancel(rt, st, side)
 
     async def _evaluate(self, rt: MatchRT, now: float) -> None:
         # Book updates and the 1s timer both evaluate; without the lock two evaluations can pass
@@ -708,6 +822,7 @@ class Engine:
         rt.last_eval = now
         await self._check_exits(rt)
         gate = self._gate(rt, now)
+        await self._maker_step(rt, now, gate)
         if gate is not None:
             return
         row = rt.row
@@ -742,7 +857,8 @@ class Engine:
                         bid_a, ask_a, asz_a, bid_b, ask_b, asz_b, calib=row.calib_source or "", volume=rt.volume or 0.0)
 
     def _position_block(self, rt: MatchRT, name: str, params: StrategyParams, now: float) -> Optional[str]:
-        held = [t for t in self.open_trades.values() if t.event_ticker == rt.row.event_ticker]
+        # The maker's legs are a separate book (they hedge each other), so they don't block the takers.
+        held = [t for t in self.open_trades.values() if t.event_ticker == rt.row.event_ticker and t.strategy != "maker"]
         if any(t.strategy == name for t in held):
             return "already_open"
         if held:  # one position per match across strategies: they share the same model error
@@ -932,6 +1048,7 @@ class Engine:
             row.result_a = value
             row.status = "settled"
             row.volume = (dollars(ma.get("volume_fp")) or 0) * 2
+            await self._maker_close(row.event_ticker)  # write any last paper fills before settling them
             await self._save(row)
             for t in [t for t in self.open_trades.values() if t.event_ticker == row.event_ticker]:
                 v = value if t.ticker == row.market_a else 1 - value
