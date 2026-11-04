@@ -61,6 +61,8 @@ def test_pages_render_and_controls_need_password(engine):
     assert c.get("/?view=finished").status_code == 200
     mem = c.get("/api/debug/mem").json()
     assert mem["containers"]["matches"] == 1 and mem["top_types"]
+    assert c.post("/api/debug/profile?seconds=1").status_code == 401
+    assert "function calls" in c.post("/api/debug/profile?seconds=1", auth=("", "secret")).text
     assert c.get("/api/archive/2026-11-01/book_ticks.csv.gz").status_code == 404
     assert c.get("/api/archive/..%2F..%2Fetc/passwd").status_code == 404
     r = c.post("/controls/agent", data={"action": "stop"})

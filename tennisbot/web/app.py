@@ -249,6 +249,23 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
         mem_cache.update(at=time.time(), out=out)
         return JSONResponse(out)
 
+    @app.post("/api/debug/profile")
+    async def api_profile(seconds: float = 20.0) -> Response:
+        """Profile the event loop thread for a few seconds (POST, so it needs the password)."""
+        import cProfile
+        import pstats
+        import asyncio
+
+        prof = cProfile.Profile()
+        prof.enable()
+        await asyncio.sleep(min(max(seconds, 1.0), 60.0))
+        prof.disable()
+        out = io.StringIO()
+        st = pstats.Stats(prof, stream=out)
+        st.sort_stats("tottime").print_stats(25)
+        st.sort_stats("cumulative").print_stats(35)
+        return Response(out.getvalue(), media_type="text/plain")
+
     @app.get("/api/export/{table}")
     async def export(table: str, since_hours: float = 0) -> Response:
         """CSV export of a research table (``since_hours`` limits time-stamped tables)."""
