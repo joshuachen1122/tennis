@@ -66,7 +66,8 @@ The system prices each match with a point-based Markov model: each player's prob
 winning a point on serve is backed out of the pre-match market price (assuming a tour-typical \
 sum of serve rates) and then updated with observed serve points. It buys when the model \
 probability (blended with the market mid by `model_weight`; the raw model is also shown) exceeds the ask by a margin, only while the score and price have been stable for a \
-few seconds.
+few seconds. The `favourite` strategy ignores the model: it prices off the market mid stretched \
+toward the favourite (`market_slope`), betting that in-play favourites are underpriced.
 
 Judge whether the model is likely right and the market wrong *in this situation*. Typical \
 reasons the model is wrong: the pre-match calibration is stale or the serve-rate sum is off for \

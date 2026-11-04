@@ -31,7 +31,7 @@ from tennisbot.strategies import (
     evaluate,
     params_from_dict,
     params_to_dict,
-    blend,
+    fair_prob,
     should_exit,
     size_contracts,
     taker_fee_cents,
@@ -780,7 +780,7 @@ class Engine:
         params = self.params[name]
         return {**self._context(rt, intent.side), "strategy": name, "params_version": PARAMS_VERSION, "ask_cents": intent.ask,
                 "model_prob_bought_side": round(intent.model_p, 4), "raw_model_prob_bought_side": intent.extra.get("raw_model_p"),
-                "model_weight": params.model_weight, "edge": round(intent.edge, 4)}
+                "model_weight": params.model_weight, "market_slope": params.market_slope, "edge": round(intent.edge, 4)}
 
     async def _enter(self, rt: MatchRT, name: str, intent: Any, ticker: str, count: int,
                      verdict: Optional[dict[str, Any]] = None) -> None:
@@ -866,7 +866,8 @@ class Engine:
                 continue
             raw = rt.model_a if t.ticker == rt.row.market_a else 1 - rt.model_a
             bid, bid_size, ask, _ = self._bbo(t.ticker)
-            reason = should_exit(params, blend(raw, bid, ask, params.model_weight), bid)
+            fair = fair_prob(raw, bid, ask, params)
+            reason = should_exit(params, fair, bid) if fair is not None else None
             if reason is None or bid is None or bid_size < 1:
                 continue
             if time.time() - rt.board_changed_at < 2 or self.unexplained_move(rt):

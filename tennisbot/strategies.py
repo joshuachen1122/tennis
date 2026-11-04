@@ -9,6 +9,10 @@ position per match across all strategies, and a cap on entries per match.
 v3 (2026-11-04): the raw model ran ~7c above the market on the players it bought and lost to it on
 accuracy (52 resolved trades, research/04), so strategies trade on a blend of model and market
 (`model_weight`), and `model_edge` / `late_close` only enter when the LLM reviewer agrees.
+
+v4 (2026-11-04): with 73 settled matches, the model's disagreements with the market carried no
+information out of sample, but the market itself was too timid in play: sides priced 70-80c won
+83% (research/06). `favourite` prices off the market alone, stretched by `market_slope`.
 """
 
 from __future__ import annotations
@@ -54,9 +58,12 @@ class StrategyParams:
     # Enter only after the LLM reviewer says take (fails closed when the LLM is off or out of budget).
     llm_gate: bool = False
     min_games_each: int = 0  # both players have at least this many games in the current set (or tiebreak)
+    # > 0: ignore the model and price on sigmoid(market_slope * logit(market mid)). A slope above 1
+    # says favourites are underpriced and longshots overpriced (the favourite-longshot bias).
+    market_slope: float = 0.0
 
 
-PARAMS_VERSION = 3  # bump to replace parameters saved from the dashboard with these defaults
+PARAMS_VERSION = 4  # bump to replace parameters saved from the dashboard with these defaults
 
 DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Primary hypothesis: the Markov model calibrated to the pre-match price, updated with
@@ -74,6 +81,11 @@ DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # so it keeps the raw model; the LLM still reviews it in shadow.
     "closer": StrategyParams(min_edge=0.025, min_price=60, max_price=97, min_side_prob=0.90, exit_on_convergence=False,
                              max_entries_per_match=2, min_match_volume=10_000),
+    # v4 experiment: in-play favourites are underpriced. Market mids fit a slope of ~1.5 on 73
+    # settled matches (cross-validated); 1.4 is shrunk toward no effect. The replay was about
+    # break-even after fees, so this is a prospective test, not a proven edge. One entry, held.
+    "favourite": StrategyParams(min_edge=0.02, min_price=55, max_price=90, market_slope=1.4, exit_on_convergence=False,
+                                max_entries_per_match=1, min_match_volume=10_000),
 }
 
 
@@ -118,6 +130,17 @@ def blend(model_p: float, bid: Optional[int], ask: Optional[int], weight: float)
     return mid + weight * (model_p - mid)
 
 
+def fair_prob(raw: float, bid: Optional[int], ask: Optional[int], params: StrategyParams) -> Optional[float]:
+    """The probability a strategy trades on: the model blended with the market, or (market_slope)
+    the market mid alone, stretched. None when a market-priced strategy has no two-sided quote."""
+    if params.market_slope <= 0:
+        return blend(raw, bid, ask, params.model_weight)
+    if bid is None or ask is None or bid <= 0 or ask >= 100:
+        return None
+    mid = min(max((bid + ask) / 200.0, 1e-4), 1 - 1e-4)
+    return 1.0 / (1.0 + math.exp(-params.market_slope * math.log(mid / (1 - mid))))
+
+
 def _side_quotes(s: Snapshot, side: str) -> tuple[Optional[int], Optional[int], float, float]:
     if side == "a":
         return s.bid_a, s.ask_a, s.ask_a_size, s.model_a
@@ -146,7 +169,9 @@ def evaluate(name: str, params: StrategyParams, s: Snapshot) -> list[Intent]:
         bid, ask, size, raw = _side_quotes(s, side)
         if ask is None or ask <= 0 or ask >= 100:
             continue
-        p = blend(raw, bid, ask, params.model_weight)
+        p = fair_prob(raw, bid, ask, params)
+        if p is None:
+            continue
         edge = net_edge(p, ask)
         if edge < params.min_edge * 0.6:
             continue

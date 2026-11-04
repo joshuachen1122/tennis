@@ -1,6 +1,6 @@
 from tennisbot.model.live import infer_format, parse_board, point_winner, to_state
 from tennisbot.model.markov import MatchFormat, ScoreState
-from tennisbot.strategies import DEFAULT_PARAMS, Snapshot, blend, evaluate, net_edge, should_exit, size_contracts, taker_fee_cents
+from tennisbot.strategies import DEFAULT_PARAMS, PARAMS_VERSION, Snapshot, blend, evaluate, fair_prob, net_edge, should_exit, size_contracts, taker_fee_cents
 
 A, B = "comp-a", "comp-b"
 
@@ -75,6 +75,19 @@ def test_blend_shrinks_toward_mid():
     assert blend(0.80, None, 72, 0.5) == 0.80  # no two-sided quote: raw model
     # a raw 6c edge that cleared v2's 5c bar is now only ~1.3c net: no trade
     assert all(i.skip for i in evaluate("model_edge", DEFAULT_PARAMS["model_edge"], snap(0.60, 53, 54)))
+
+
+def test_favourite_prices_off_the_market_not_the_model():
+    p = DEFAULT_PARAMS["favourite"]
+    assert abs(fair_prob(0.5, 74, 75, p) - 0.8176) < 1e-3  # sigmoid(1.4 * logit(0.745)); the model is ignored
+    assert fair_prob(0.9, None, 75, p) is None
+    assert abs(fair_prob(0.5, 49, 51, p) - 0.5) < 1e-9  # a coin flip stays a coin flip
+    out = [i for i in evaluate("favourite", p, snap(0.10, 74, 75)) if i.skip is None]
+    assert len(out) == 1 and out[0].side == "a" and out[0].edge > 0.05
+    # the underdog side is never bought, and nothing trades near 50c
+    assert all(i.skip for i in evaluate("favourite", p, snap(0.99, 24, 25)) if i.side == "a")
+    assert [i for i in evaluate("favourite", p, snap(0.5, 49, 51)) if i.skip is None] == []
+    assert should_exit(p, 0.0, 99) is None  # held to settlement
 
 
 def test_late_close_only_in_tight_deciding_set():
@@ -168,7 +181,7 @@ async def test_concurrent_evaluations_enter_once(tmp_path):
     assert llm.calls == 1
     assert len(eng.open_trades) == 1
     (t,) = eng.open_trades.values()
-    assert t.strategy == "model_edge" and t.llm_verdict["take"] and t.context["params_version"] == 3
+    assert t.strategy == "model_edge" and t.llm_verdict["take"] and t.context["params_version"] == PARAMS_VERSION
     await db.dispose()
 
 

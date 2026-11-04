@@ -91,9 +91,10 @@ def _local_time(v: Any) -> Markup:
 TEMPLATES.env.filters.update(cents=_cents, pct=_pct, usd=_usd, signed_usd=_signed_usd, vol=_vol, iso=_iso, local_time=_local_time)
 
 STRATEGY_BLURBS = {
-    "model_edge": "Buy when the Markov model beats the ask by 5¢+ between points",
+    "model_edge": "Buy when the model, half-blended with the market, beats the ask by 3¢+; LLM-gated",
     "late_close": "Same model, only late in tight deciding sets",
     "closer": "Back 90%+ favorites the market underprices; hold to settlement",
+    "favourite": "Market price only, stretched toward the favorite (slope 1.4); hold to settlement",
 }
 
 

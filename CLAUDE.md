@@ -16,6 +16,9 @@ reuse its patterns.
 - One open position per match across all strategies. `model_edge` / `late_close` are LLM-gated
   (fail closed); gate verdicts are `llm_notes` rows with kind="gate". Score them with
   `scripts/gate_report.py`.
+- The Markov model adds nothing to the market price out of sample, and model-driven underdog buys lose
+  (research/06). `favourite` (v4) prices off the market alone (`market_slope`). Replay fair-value
+  rules with `scripts/fair_value_replay.py <db>`.
 - Paper only: there is no order-placement code. Adding live trading needs explicit user approval,
   spend caps and a kill switch, as in Fifteen.
 - Research tables are append-only. Export them via `/api/export/{table}`.
