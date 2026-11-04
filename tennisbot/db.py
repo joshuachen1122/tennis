@@ -226,6 +226,7 @@ def _pragmas(conn: Any, _rec: Any) -> None:
     cur = conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL")
     cur.execute("PRAGMA synchronous=NORMAL")
+    cur.execute("PRAGMA busy_timeout=30000")  # wait out another writer instead of failing after 5s
     cur.close()
 
 

@@ -59,6 +59,8 @@ def test_pages_render_and_controls_need_password(engine):
     assert "1 live now" in c.get("/").text  # live matches are counted (recorded), not listed
     assert "Carlos Alcaraz" not in c.get("/?view=live").text  # unknown tab falls back to positions
     assert c.get("/?view=finished").status_code == 200
+    mem = c.get("/api/debug/mem").json()
+    assert mem["containers"]["matches"] == 1 and mem["top_types"]
     assert c.get("/api/archive/2026-11-01/book_ticks.csv.gz").status_code == 404
     assert c.get("/api/archive/..%2F..%2Fetc/passwd").status_code == 404
     r = c.post("/controls/agent", data={"action": "stop"})

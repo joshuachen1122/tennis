@@ -1044,6 +1044,13 @@ class Engine:
         start = int(_aware(first).timestamp() * 1000) if first else int(time.time() * 1000)
         return {"now": int(time.time() * 1000), "start": start, "trades": pts, "strategies": sorted(self.params)}
 
+    def memory_report(self) -> dict[str, int]:
+        """Sizes of the long-lived in-memory collections (for /api/debug/mem)."""
+        return {"matches": len(self.matches), "mids": sum(len(rt.mids) for rt in self.matches.values()),
+                "rest_books": len(self.rest_books), "market_event": len(self.market_event), "pending": len(self.pending),
+                "trade_agg": len(self.trade_agg), "marks": len(self.marks), "open_trades": len(self.open_trades),
+                "stream_books": len(getattr(self.stream, "books", {}) or {})}
+
     def controls_state(self) -> dict[str, Any]:
         return {"agent_enabled": self.agent_enabled, "params": params_to_dict(self.params)}
 

@@ -11,6 +11,7 @@ import io
 import json
 import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -203,6 +204,29 @@ def create_app(engine: Any, password: Optional[str]) -> FastAPI:
     async def api_stats() -> JSONResponse:
         st = dict(engine.stats.get("strategies", {}))
         return JSONResponse({"strategies": st, "health": {k: str(v) if isinstance(v, datetime) else v for k, v in engine.health.items()}})
+
+    mem_cache: dict[str, Any] = {}
+
+    @app.get("/api/debug/mem")
+    async def api_mem() -> JSONResponse:
+        """Process memory and the biggest object types (cached for a minute: counting is slow)."""
+        if mem_cache.get("at", 0) > time.time() - 60:
+            return JSONResponse(mem_cache["out"])
+        import gc
+        from collections import Counter
+
+        status = {}
+        try:
+            for line in open("/proc/self/status"):
+                k, _, v = line.partition(":")
+                if k in ("VmRSS", "VmSwap", "Threads"):
+                    status[k] = v.strip()
+        except OSError:
+            pass
+        types = Counter(type(o).__name__ for o in gc.get_objects())
+        out = {"proc": status, "top_types": types.most_common(20), "containers": engine.memory_report()}
+        mem_cache.update(at=time.time(), out=out)
+        return JSONResponse(out)
 
     @app.get("/api/export/{table}")
     async def export(table: str, since_hours: float = 0) -> Response:
