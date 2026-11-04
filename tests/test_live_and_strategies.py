@@ -260,3 +260,18 @@ async def test_restart_keeps_serve_points_and_entries(tmp_path):
     assert (rt.won_a, rt.played_a, rt.won_b, rt.played_b) == (1, 3, 1, 1)
     assert rt.entries["closer"] == 1
     await db.dispose()
+
+
+async def test_streams_only_matches_a_strategy_could_trade(tmp_path):
+    from tennisbot.db import Match
+    from tennisbot.engine import MatchRT
+
+    eng, rt, db = await _engine_with_edge(tmp_path)
+    small = MatchRT(row=Match(event_ticker="EV2", series="KXATPMATCH", market_a="SA", market_b="SB", comp_a=A, comp_b=B))
+    small.board, small.volume = rt.board, 2_000
+    assert rt.live and small.live
+    eng.matches["EV2"] = small
+    assert eng._stream_tickers() == {"MA", "MB"}
+    small.volume = 12_000  # crossed the strategies' volume floor
+    assert eng._stream_tickers() == {"MA", "MB", "SA", "SB"}
+    await db.dispose()

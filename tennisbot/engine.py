@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     live_poll_sec: float = 1.0
     cold_poll_sec: float = 30.0
     stream_prematch_min: float = 20.0  # subscribe to a match's WebSocket books this long before its start
+    # Stream only matches a strategy could trade (every strategy needs 10k of match volume) or that hold a
+    # position; the rest use the REST top of book from discovery. Streaming all ~70 live matches needed
+    # ~9% of a CPU, over the shared-cpu-1x quota (throttled at 92% steal, failing health checks, 2026-11-04).
+    stream_min_volume: float = 10_000.0
     rest_book_sec: float = 2.0  # REST top-of-book refresh when the WebSocket is down
     flush_sec: float = 2.0
     settle_sec: float = 30.0
@@ -315,6 +319,8 @@ class Engine:
                 for m in ms:
                     self._rest_book(m)
                 rt.volume = sum(dollars(m.get("volume_fp")) or 0 for m in ms)
+                if ms[0]["ticker"] not in self.stream.books:
+                    await self._on_book(ms[0]["ticker"])  # unstreamed: record the REST book (pre-match mid, ticks)
         await self.stream.set_tickers(self._stream_tickers())
         self.health["open_events"] = len(open_events)
         self.health["last_discovery"] = utcnow()
@@ -355,6 +361,7 @@ class Engine:
     def _stream_tickers(self) -> set[str]:
         now = utcnow()
         out: set[str] = set()
+        held = {t.event_ticker for t in self.open_trades.values()}
         for rt in self.matches.values():
             if rt.final:
                 continue
@@ -362,7 +369,8 @@ class Engine:
             # Pre-match books only shortly before the start: they were most of the ~1,600 messages/s that
             # pinned the shared CPU (93% steal, 2026-11-04). REST still refreshes every book.
             soon = sched is None or sched - timedelta(minutes=self.s.stream_prematch_min) <= now
-            if rt.live or soon:
+            tradeable = rt.volume >= self.s.stream_min_volume or rt.row.event_ticker in held
+            if (rt.live or soon) and tradeable:
                 out.update(t for t in (rt.row.market_a, rt.row.market_b) if t)
         return out
 
