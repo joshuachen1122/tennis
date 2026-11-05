@@ -1,9 +1,16 @@
 import math
 import time
+from dataclasses import replace
 
 from tennisbot.maker import MakerState, Quote, desired_prices, maker_fee_cents, quote_price
 
 from tests.test_live_and_strategies import _engine_with_edge
+
+
+async def _maker_engine(tmp_path):
+    eng, rt, db = await _engine_with_edge(tmp_path)
+    eng.params["maker"] = replace(eng.params["maker"], enabled=True)  # retired by default (research/07)
+    return eng, rt, db
 
 
 def test_quote_fills_after_the_queue_and_on_prints_through_it():
@@ -38,7 +45,7 @@ def test_desired_prices_need_a_gap_and_cap_the_completing_leg():
 async def test_engine_pairs_both_legs_and_locks_the_spread(tmp_path):
     from tennisbot.kalshi.client import Book
 
-    eng, rt, db = await _engine_with_edge(tmp_path)
+    eng, rt, db = await _maker_engine(tmp_path)
     eng.market_event.update({"MA": "EV", "MB": "EV"})
     eng.stream.connected = True
     for t, b in eng.rest_books.items():
@@ -85,7 +92,7 @@ async def test_orphaned_trades_on_settled_matches_get_settled(tmp_path):
 async def test_maker_resumes_a_half_filled_pair_after_a_restart(tmp_path):
     from tennisbot.kalshi.client import Book
 
-    eng, rt, db = await _engine_with_edge(tmp_path)
+    eng, rt, db = await _maker_engine(tmp_path)
     eng.market_event.update({"MA": "EV", "MB": "EV"})
     eng.stream.connected = True
     for t, b in eng.rest_books.items():

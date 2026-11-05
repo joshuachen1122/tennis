@@ -73,3 +73,28 @@ state was reset.
     set, forgot a half-filled pair and left its leg unhedged. That happened 4 times.
   - `Engine._maker_resume` now rebuilds the latest cycle (target and legs) from the open maker trades.
 
+
+### Verdict: retired (2026-11-05 18:10 UTC, PARAMS_VERSION 6)
+
+Results from 21:04 UTC Nov 4 to 18:05 UTC Nov 5: 1,883 fills, 22,661 contracts, $90.20 of maker fees.
+Settled P&L is **−$338.17**.
+
+| Settled cycles | Cycles | Contracts | P&L | Per contract |
+|---|---|---|---|---|
+| Completed pairs | 757 | 20,289 | +$80.59 | +0.40¢ |
+| Unpaired, last cycle of the match | 87 | 1,158 | −$403.61 | −34.9¢ |
+| Unpaired, abandoned by a state reset (all before the fix) | 5 | 64 | −$15.15 | −23.7¢ |
+
+- **Per contract, by match:** −1.57¢ on 176 matches. The match-bootstrap 90% interval is
+  **[−2.06¢, −1.15¢]**, so the loss is clearly not chance.
+- **Unpaired rate:** about 11% of cycles end one-legged. Break-even needs under about 2.5%.
+- **Markouts** (bid minus fill price): −2.2¢ at 10s and −2.5¢ at 60s, getting worse as the sample
+  grew. The bid falls about 2¢ after a fill, which is more than the spread a pair locks.
+- **Leverage:** every leverage bucket loses, from −0.8¢ per contract at the lowest to −2.6¢ at the
+  highest (0.08 and above). There is no subset of game states where quoting pays.
+- **Why:** the fills that happen are the ones where an informed seller (someone watching the court,
+  ~13s ahead of Kalshi's score feed) hits the bid. Passive quoting without a faster score feed or the
+  ability to requote within a second is picked off.
+- **Change:** `maker` is now `enabled=False` by default, and `PARAMS_VERSION` is bumped to 6 so the
+  dashboard's saved parameters reset. `favourite` stays off. The code stays in place for a re-test with
+  a faster feed.

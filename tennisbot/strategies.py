@@ -63,7 +63,7 @@ class StrategyParams:
     market_slope: float = 0.0
 
 
-PARAMS_VERSION = 5  # bump to replace parameters saved from the dashboard with these defaults
+PARAMS_VERSION = 6  # bump to replace parameters saved from the dashboard with these defaults
 
 DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Primary hypothesis: the Markov model calibrated to the pre-match price, updated with
@@ -92,7 +92,9 @@ DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Paper market making (tennisbot/maker.py): rest bids on both players, collect the spread when both
     # fill. No model. min_edge = the gap the two opening bids must leave below 100c (2c);
     # max_entries_per_match = completed pairs per match; max_stake_usd = per leg.
-    "maker": StrategyParams(min_edge=0.02, min_price=10, max_price=90, exit_on_convergence=False, max_stake_usd=10.0,
+    # Retired 2026-11-05 18:10 UTC: -1.57c/contract on 176 matches, 90% CI [-2.06, -1.15]; pairs earn
+    # +0.4c but ~11% of cycles end one-legged at -35c (research/07). Off by default.
+    "maker": StrategyParams(enabled=False, min_edge=0.02, min_price=10, max_price=90, exit_on_convergence=False, max_stake_usd=10.0,
                             max_entries_per_match=10, min_match_volume=10_000),
 }
 

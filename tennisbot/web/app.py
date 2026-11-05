@@ -108,7 +108,7 @@ STRATEGY_BLURBS = {
     "late_close": "Same model, only late in tight deciding sets",
     "closer": "Back 90%+ favorites the market underprices; hold to settlement",
     "favourite": "Market price only, stretched toward the favorite (slope 1.4); retired",
-    "maker": "Paper limit orders: rest bids on both players, lock the spread when both fill",
+    "maker": "Retired: paper limit orders on both players lost 1.6c/contract to adverse selection",
 }
 
 
