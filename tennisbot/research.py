@@ -21,7 +21,11 @@ def _bucket(x: Optional[float], edges: list[float], fmt: str = "{:.0f}") -> str:
     return f">={fmt.format(edges[-1])}" if x >= edges[-1] else f"<{fmt.format(edges[0])}"
 
 
-def _summ(trades: list[PaperTrade]) -> dict[str, Any]:
+_STAT_COLUMNS = ("strategy", "count", "entry_price", "entry_fee", "exit_fee", "pnl", "edge", "model_p", "mark_10s",
+                 "mark_60s", "llm_verdict")
+
+
+def _summ(trades: list[Any]) -> dict[str, Any]:
     closed = [t for t in trades if t.pnl is not None]
     staked = sum(t.count * t.entry_price for t in closed)
     pnl = sum(t.pnl or 0 for t in closed)
@@ -47,9 +51,13 @@ def _summ(trades: list[PaperTrade]) -> dict[str, Any]:
 
 
 async def strategy_stats(db: Database, params: dict[str, StrategyParams], bankroll_usd: float) -> dict[str, Any]:
+    # Runs every 10s: fetch plain column tuples, not ORM objects with their JSON context. Building
+    # thousands of full PaperTrade objects each time kept the full garbage collector running and
+    # pushed the shared CPU into throttling once maker had written ~2k trades.
+    cols = [getattr(PaperTrade, c) for c in _STAT_COLUMNS]
     async with db.read_session() as s:
-        trades = list((await s.execute(select(PaperTrade).order_by(PaperTrade.id.desc()).limit(5000))).scalars())
-    by: dict[str, list[PaperTrade]] = defaultdict(list)
+        trades = list((await s.execute(select(*cols).order_by(PaperTrade.id.desc()).limit(5000))).all())
+    by: dict[str, list[Any]] = defaultdict(list)
     for t in trades:
         by[t.strategy].append(t)
     out = {}
@@ -63,7 +71,7 @@ async def strategy_stats(db: Database, params: dict[str, StrategyParams], bankro
         st["llm_take_pnl_usd"] = sum(t.pnl or 0 for t in agree) / 100 if llm else None
         st["llm_skip_pnl_usd"] = sum(t.pnl or 0 for t in llm if not t.llm_verdict.get("take")) / 100 if llm else None
         out[name] = st
-    return {"strategies": out, "recent": trades[:40]}
+    return {"strategies": out}
 
 
 async def build_report(db: Database, params: dict[str, StrategyParams]) -> dict[str, Any]:
