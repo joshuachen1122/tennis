@@ -275,3 +275,13 @@ async def test_streams_only_matches_a_strategy_could_trade(tmp_path):
     small.volume = 12_000  # crossed the strategies' volume floor
     assert eng._stream_tickers() == {"MA", "MB", "SA", "SB"}
     await db.dispose()
+
+
+def test_v5_model_strategies_never_buy_underdogs():
+    # the model likes a 35c underdog by a mile; v5 logs it as a near-miss but does not buy it
+    for name in ("model_edge", "late_close"):
+        p = DEFAULT_PARAMS[name]
+        assert p.min_price == 50
+    out = evaluate("model_edge", DEFAULT_PARAMS["model_edge"], snap(0.60, 34, 35))
+    assert out and all(i.skip == "price_below_min" for i in out if i.side == "a")
+    assert not [i for i in out if i.skip is None]

@@ -63,17 +63,18 @@ class StrategyParams:
     market_slope: float = 0.0
 
 
-PARAMS_VERSION = 4  # bump to replace parameters saved from the dashboard with these defaults
+PARAMS_VERSION = 5  # bump to replace parameters saved from the dashboard with these defaults
 
 DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Primary hypothesis: the Markov model calibrated to the pre-match price, updated with
     # observed serve points, finds in-play prices that drift from fair between points.
     # v3: half-weight the model against the market (a 3c blended edge = 6c raw) and gate on the LLM.
-    "model_edge": StrategyParams(min_edge=0.03, min_price=10, max_price=90, require_prematch_calibration=True,
+    # v5: no model-driven underdog buys (min_price 50). Underdogs lost ~15c/contract (research/06).
+    "model_edge": StrategyParams(min_edge=0.03, min_price=50, max_price=90, require_prematch_calibration=True,
                                  exclude_series=["KXITFMATCH"], min_match_volume=10_000, model_weight=0.5, llm_gate=True),
     # The user's hypothesis: late, close deciding sets swing hardest on each point, so mispricing
     # there should be largest. Same model, restricted to 4-4 or later in the deciding set.
-    "late_close": StrategyParams(min_edge=0.02, min_price=15, max_price=85, deciding_set_only=True, min_games_each=4,
+    "late_close": StrategyParams(min_edge=0.02, min_price=50, max_price=85, deciding_set_only=True, min_games_each=4,
                                  require_prematch_calibration=True, exclude_series=["KXITFMATCH"], min_match_volume=10_000,
                                  model_weight=0.5, llm_gate=True),
     # Favorite-longshot test: near-certain leaders are underpriced when retail buys comebacks.
