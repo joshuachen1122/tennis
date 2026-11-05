@@ -44,3 +44,71 @@ Run `python scripts/gate_report.py` after 24h:
 
 Caveat: a day is maybe 20–60 resolved candidates. A clear sign either way is informative; a small
 difference is not.
+
+## Result after 24h (2026-11-05 00:22 UTC)
+
+Rules for `model_edge` / `late_close` were identical under v3 and v4.
+
+| | Trades | P&L |
+|---|---|---|
+| v1 (ungated) `model_edge` + `late_close` | 37 | −$141.97 |
+| v2 (ungated) | 14 | −$185.36 |
+| **v3/v4 gated** | **1 taken** | **+$8.13** |
+
+The LLM gate reviewed 38 candidates:
+
+| Outcome | Count |
+|---|---|
+| Taken | 1 |
+| Skipped | 34 |
+| Stale before entry | 3 |
+
+Counterfactual, buying every candidate at its quoted ask and holding to settlement:
+
+| | Resolved | Won | P&L |
+|---|---|---|---|
+| Skipped / stale `model_edge` | 30 | 53% | **+$100.59** |
+| Skipped `late_close` | 1 | 1 | +$18.09 |
+| Taken | 1 | 1 | +$8.13 |
+| All 32, ungated | 32 | 18 | **+$126.81**, +7.3¢/contract |
+
+- The ungated 90% interval (match bootstrap) is [−14.7¢, +28.3¢].
+- No candidate had an LLM probability 5¢ or more under the ask, so the fade line is empty.
+
+Brier on the 32 resolved candidates (lower is better):
+
+| Forecast | Brier |
+|---|---|
+| Raw model | 0.2273 |
+| Blended model | 0.2296 |
+| LLM | 0.2340 |
+| Price | 0.2373 |
+
+Spend over the 24h:
+
+| Kind | Cost |
+|---|---|
+| Gate reviews | $0.46 |
+| Shadow reviews of ungated trades | $2.53 |
+| Analyst | $0.26 |
+| **Total** | **$3.25** |
+
+### Verdict
+
+**The gate did not help.**
+- It said no to 34 of 35 decided candidates (the other 3 went stale). The ones it turned down would have made
+  money as a group, though the interval is wide enough to include zero.
+- Its probabilities were the least accurate of the three forecasts.
+- It added nothing over the model, which itself adds nothing over the market (research/06).
+- The fixed criterion asked for a skipped set that loses money and a taken set that beats it. Neither held.
+
+### Decisions
+
+- The boost ended at 00:15 UTC as planned; the budget is $1/day again.
+- **Recommendation: stop funding the reviewer.**
+  - Its gate decisions don't beat the price.
+  - The shadow reviews are most of the spend and haven't changed a decision.
+  - If it's switched off, `llm_gate` must also be turned off for `model_edge` / `late_close`. Otherwise
+    they fail closed and never trade.
+- v5 applies min_price 50 to both strategies (research/06). The underdog half of this counterfactual
+  doesn't argue against that: +8.8¢ on 18 candidates, 90% CI [−13.6¢, +29.8¢].

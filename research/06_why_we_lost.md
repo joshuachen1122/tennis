@@ -130,3 +130,20 @@ Win rate by entry price:
 - How it was switched off:
   - Disabled on the dashboard at 15:30 UTC.
   - The code default is now `enabled=False`, so the next `PARAMS_VERSION` bump keeps it off.
+
+## Final `favourite` tally and the v5 min_price change (2026-11-05 00:22 UTC)
+
+- **`favourite`, final:** all 195 entries are settled, including 16 that missed `open_trades`
+  during the CPU throttling and were settled by the orphan sweep.
+  - 140 won (72%).
+  - 4,284 contracts, **−$206.76**, or **−4.8¢ per contract**.
+  - It stays retired.
+- **v5 (`PARAMS_VERSION = 5`): `model_edge` and `late_close` get `min_price = 50`.** No more model-driven
+  underdog buys.
+  - The gate counterfactual (research/04) had 18 underdog candidates under the v3/v4 blend: 8 won at an
+    average of 34¢, +8.8¢ per contract, 90% CI [−13.6¢, +29.8¢].
+  - The 50/50-blend underdog replay was −15.5¢ [−26.1¢, −3.8¢] on 28 matches, and v1/v2 underdogs lost $204.
+  - The new interval is wide and includes zero, so it doesn't overturn the robust negative result.
+  - Pooled, underdogs are still around −6¢ per contract.
+- The bump reset the dashboard's saved parameters to the defaults. `favourite` is off there too (its
+  default since 15:30 UTC). The `maker` experiment (research/07) carries on.
