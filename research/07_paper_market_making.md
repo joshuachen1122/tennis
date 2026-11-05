@@ -45,4 +45,31 @@ What to read from the trades:
 
 ## Results
 
-(to be added)
+### First 6 hours (21:04 UTC Nov 4 to 03:10 UTC Nov 5)
+
+429 fills, 5,495 contracts, $21.28 of maker fees. Settled P&L is **−$67.92**, or −1.2¢ per contract.
+Cycles are grouped by event and cycle. A new group starts when the cycle number changes or the quoting
+state was reset.
+
+| Settled cycles | Cycles | Contracts | P&L | Per contract |
+|---|---|---|---|---|
+| Completed pairs | 133 | 3,830 | +$15.62 | +0.41¢ |
+| Unpaired, last cycle of the match | 15 | 205 | −$70.84 | −34.6¢ |
+| Unpaired, abandoned by a state reset | 4 | 52 | −$12.71 | −24.4¢ |
+
+- **Pairs:** they lock 0.82¢ per contract gross. Maker fees take about 0.4¢ of that.
+- **The break-even problem:** a pair earns about $0.12 and an unpaired cycle loses about $4.70. To break
+  even, fewer than about 1 cycle in 40 can end unpaired. Here it was 1 in 8.
+- **Markouts** (bid minus fill price): −1.7¢ at 10s and −1.9¢ at 60s across all fills. The bid drops
+  about 2¢ after we're filled, so the fills are adversely selected.
+- **Leverage:** markouts are flat across point leverage.
+  - 10s markout ranges from −1.2¢ to −2.0¢ per bucket. Below 0.02 it is −1.4¢; at 0.05 and above it
+    is −2.0¢.
+  - Every leverage bucket loses on cycle P&L. The buckets at 0.05 and above lose the most (−$49 of the
+    −$68), but on only 11 unpaired cycles.
+  - The data doesn't clearly support filtering out high-leverage points, so the strategy is unchanged.
+- **Fix (no params change):**
+  - The quoting state was held only in memory. A deploy, or a match briefly dropping out of the live
+    set, forgot a half-filled pair and left its leg unhedged. That happened 4 times.
+  - `Engine._maker_resume` now rebuilds the latest cycle (target and legs) from the open maker trades.
+

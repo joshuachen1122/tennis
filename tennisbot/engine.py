@@ -719,7 +719,7 @@ class Engine:
         if st is None:
             if not ok:
                 return
-            st = self.maker[ev] = MakerState()
+            st = self.maker[ev] = self._maker_resume(row)
         for q in list(st.quotes.values()):
             bid, bid_size, ask, _ = self._bbo(q.ticker)
             st.add_fill(q, q.on_top(bid, bid_size, ask))
@@ -765,6 +765,23 @@ class Engine:
                 "bid": bid, "ask": ask, "bid_size": bsz, "other_bid": bid_b if side == "a" else bid_a,
                 "other_ask": ask_b if side == "a" else ask_a, "queue_ahead": None if math.isinf(queue) else queue,
                 "posted_at": now, "cycle": st.cycles, "target": st.target, "score": self._score_text(rt)})
+
+    def _maker_resume(self, row) -> MakerState:
+        """Quoting state lives in memory, so a restart (or a match briefly dropping out of play) would
+        forget a half-filled pair and leave its leg unhedged. Rebuild the latest cycle from open trades."""
+        legs = [t for t in self.open_trades.values() if t.strategy == "maker" and t.event_ticker == row.event_ticker]
+        if not legs:
+            return MakerState()
+        cycle = max(int((t.context or {}).get("cycle") or 0) for t in legs)
+        cur = [t for t in legs if int((t.context or {}).get("cycle") or 0) == cycle]
+        st = MakerState(target=max(float((t.context or {}).get("target") or 0) for t in cur), cycles=cycle, fills=len(legs))
+        for t in cur:
+            leg = st.legs["a" if t.ticker == row.market_a else "b"]
+            leg.qty += t.count
+            leg.cost += t.count * t.entry_price
+        if st.complete() or st.target <= 0:
+            return MakerState(cycles=cycle + 1, fills=len(legs))
+        return st
 
     async def _maker_cancel(self, rt: MatchRT, st: MakerState, side: str) -> None:
         await self._maker_record(rt, st, final=True, only=side)

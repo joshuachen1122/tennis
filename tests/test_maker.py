@@ -80,3 +80,28 @@ async def test_orphaned_trades_on_settled_matches_get_settled(tmp_path):
     assert not eng.open_trades
     assert eng.realized_cents["favourite"] == 10 * 30 - 2  # B won: 100c - 70c on 10, less the fee
     await db.dispose()
+
+
+async def test_maker_resumes_a_half_filled_pair_after_a_restart(tmp_path):
+    from tennisbot.kalshi.client import Book
+
+    eng, rt, db = await _engine_with_edge(tmp_path)
+    eng.market_event.update({"MA": "EV", "MB": "EV"})
+    eng.stream.connected = True
+    for t, b in eng.rest_books.items():
+        eng.stream.books[t] = Book(t, dict(b.yes), dict(b.no), time.time())
+    bid_a, _, _, _ = eng._bbo("MA")
+    bid_b, _, _, _ = eng._bbo("MB")
+    await eng._evaluate(rt, time.time())
+    n = eng.maker["EV"].target
+    eng._on_trade({"market_ticker": "MA", "yes_price_dollars": f"{(bid_a - 1) / 100:.2f}", "count_fp": str(n), "taker_side": "no", "ts": int(time.time())})
+    rt.last_eval = 0
+    await eng._evaluate(rt, time.time())
+    assert eng.maker["EV"].legs["a"].qty == n
+    eng.maker.clear()  # a restart forgets the quoting state; the open leg is still in open_trades
+    rt.last_eval = 0
+    await eng._evaluate(rt, time.time())
+    st = eng.maker["EV"]
+    assert st.cycles == 0 and st.target == n and st.legs["a"].qty == n and st.legs["a"].avg == bid_a
+    assert "a" not in st.quotes and st.quotes["b"].price <= 100 - bid_a - 1
+    await db.dispose()
