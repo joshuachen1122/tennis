@@ -97,7 +97,7 @@ def game_card(engine: "Engine", rt: "MatchRT", closed: list[PaperTrade]) -> dict
     row = rt.row
     now = utcnow()
     open_trades = [t for t in engine.open_trades.values() if t.event_ticker == row.event_ticker]
-    trades = [_trade_dict(engine, t, t.ticker == row.market_a) for t in sorted(open_trades + closed, key=lambda t: t.opened_at)]
+    trades = [_trade_dict(engine, t, t.ticker == row.market_a) for t in sorted(open_trades + closed, key=lambda t: _aware(t.opened_at))]
     gate = engine._gate(rt, __import__("time").time()) if rt.live else None
     sched = _aware(row.scheduled)
     status = "live" if rt.live else ("final" if (rt.final or row.status in ("final", "settled")) else "upcoming")
