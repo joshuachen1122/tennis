@@ -62,3 +62,21 @@ async def test_engine_pairs_both_legs_and_locks_the_spread(tmp_path):
     fees = maker_fee_cents(n, bid_a) + maker_fee_cents(n, bid_b)
     assert abs(eng.realized_cents["maker"] - (2 * n - fees)) < 1e-6
     await db.dispose()
+
+
+async def test_orphaned_trades_on_settled_matches_get_settled(tmp_path):
+    from datetime import timedelta
+
+    from tennisbot.db import Match, PaperTrade, utcnow
+
+    eng, rt, db = await _engine_with_edge(tmp_path)
+    async with db.session() as s:
+        s.add(Match(event_ticker="OLD", series="KXITFMATCH", market_a="OA", market_b="OB", status="settled", result_a=0.0))
+        s.add(PaperTrade(strategy="favourite", event_ticker="OLD", ticker="OB", count=10, entry_price=70, entry_fee=2,
+                         model_p=0.7, edge=0.02, opened_at=utcnow() - timedelta(hours=3)))
+        await s.commit()
+    assert not eng.open_trades
+    await eng._settle_orphans()
+    assert not eng.open_trades
+    assert eng.realized_cents["favourite"] == 10 * 30 - 2  # B won: 100c - 70c on 10, less the fee
+    await db.dispose()

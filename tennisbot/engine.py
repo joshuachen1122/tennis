@@ -796,7 +796,6 @@ class Engine:
             async with self.db.session() as s:
                 s.add(trade)
                 await s.commit()
-                await s.refresh(trade)
             self.open_trades[trade.id] = trade
             t = time.time()
             self.marks += [(t + 10, trade.id, "mark_10s"), (t + 60, trade.id, "mark_60s")]
@@ -922,8 +921,7 @@ class Engine:
         )
         async with self.db.session() as s:
             s.add(trade)
-            await s.commit()
-            await s.refresh(trade)
+            await s.commit()  # expire_on_commit=False: trade.id is set; a refresh would retake the write lock
         self.open_trades[trade.id] = trade
         rt.entries[name] += 1
         now = time.time()
@@ -1032,6 +1030,7 @@ class Engine:
     # ------------------------------------------------------------------ settlement
 
     async def settle(self) -> None:
+        await self._settle_orphans()
         # Open positions on finished / closed matches
         events = {t.event_ticker for t in self.open_trades.values()}
         candidates = [rt for rt in self.matches.values() if rt.final and rt.row.result_a is None]
@@ -1054,6 +1053,36 @@ class Engine:
                 v = value if t.ticker == row.market_a else 1 - value
                 await self._close(t, round(v * 100, 2), 0.0, "settled")
             self.matches.pop(row.event_ticker, None)
+
+    async def _settle_orphans(self) -> None:
+        """Settle open paper trades the match loop can no longer see. Under heavy CPU throttling on
+        2026-11-04, 16 entries were committed but never reached ``open_trades`` (their matches then
+        settled without them), and a restart doesn't reload settled matches. Every 5 minutes: adopt
+        open trades from the database, and close any whose match is not tracked from its result."""
+        now = time.time()
+        if now - getattr(self, "_orphans_at", 0.0) < 300:
+            return
+        self._orphans_at = now
+        cutoff = utcnow() - timedelta(minutes=2)
+        async with self.db.read_session() as s:
+            rows = (await s.execute(select(PaperTrade).where(PaperTrade.closed_at.is_(None), PaperTrade.opened_at < cutoff))).scalars().all()
+        for t in rows:
+            if t.id not in self.open_trades:
+                logger.warning("adopting orphaned paper trade %d [%s] %s", t.id, t.strategy, t.event_ticker)
+                self.open_trades[t.id] = t
+        for t in [t for t in self.open_trades.values() if t.event_ticker not in self.matches]:
+            async with self.db.read_session() as s:
+                m = await s.get(Match, t.event_ticker)
+            value = m.result_a if m is not None else None
+            if value is not None:
+                value = value if t.ticker == m.market_a else 1 - value  # type: ignore[union-attr]
+            else:
+                try:
+                    value = _settlement_value(await self.client.market(t.ticker))
+                except KalshiAPIError:
+                    continue
+            if value is not None:
+                await self._close(t, round(value * 100, 2), 0.0, "settled")
 
     # ------------------------------------------------------------------ storage
 
