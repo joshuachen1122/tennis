@@ -1153,7 +1153,8 @@ class Engine:
         report = await build_report(self.db, self.params)
         if not force and report["totals"]["closed"] < self.s.analyst_min_closed_trades:
             return "not enough closed trades yet"
-        if self._llm_budget_left() <= 0:
+        # An analyst run costs ~$0.30; starting one with any budget left overshot the daily cap.
+        if self._llm_budget_left() < float((self.last_review or {}).get("cost") or 0.3):
             return "LLM budget exhausted for today"
         self._analyst_running = True
         try:
