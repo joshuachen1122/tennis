@@ -94,6 +94,16 @@ async def test_stream_unsubscribes_markets_it_no_longer_wants():
     actions = {(m["params"]["action"], tuple(m["params"]["market_tickers"]), m["params"]["sids"][0]) for m in sent}
     assert actions == {("add_markets", ("C",), 1), ("add_markets", ("C",), 2), ("delete_markets", ("A",), 1), ("delete_markets", ("A",), 2)}
     assert st._subscribed == {"B", "C"} and "A" not in st.books
+    # Dropping the last market unsubscribes the channels: an empty filter would stream every market.
+    sent.clear()
+    await st.set_tickers(set())
+    assert sent == [{"id": sent[0]["id"], "cmd": "unsubscribe", "params": {"sids": [1, 2]}}]
+    assert st._sids == {} and st._subscribed == set() and st.books == {}
+    await st._handle({"type": "ticker", "sid": 9, "seq": 1, "msg": {"market_ticker": "KXMVE-X", "yes_bid_dollars": "0.10", "yes_ask_dollars": "0.20"}})
+    assert st.books == {}
+    sent.clear()
+    await st.set_tickers({"D"})
+    assert {m["cmd"] for m in sent} == {"subscribe"} and st._subscribed == {"D"}
 
 
 async def test_stream_coalesces_book_callbacks():
@@ -101,6 +111,7 @@ async def test_stream_coalesces_book_callbacks():
 
     seen: list[str] = []
     st = MarketStream(client=None, on_book=lambda t: seen.append(t), on_trade=lambda m: None)  # type: ignore[arg-type]
+    st.wanted = {"K", "T"}
     await st._handle({"type": "ticker", "sid": 3, "seq": 1, "msg": {"market_ticker": "K", "yes_bid_dollars": "0.6100", "yes_ask_dollars": "0.6300",
                                                                    "yes_bid_size_fp": "120.00", "yes_ask_size_fp": "45.00"}})
     assert st.books["K"].bbo() == (61, 120.0, 63, 45.0)

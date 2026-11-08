@@ -270,8 +270,19 @@ class MarketStream:
             if add:
                 await self._subscribe(add)
             drop = sorted(self._subscribed - self.wanted)
-            if drop:
+            if drop and not self.wanted:
+                await self._unsubscribe_all()
+            elif drop:
                 await self._unsubscribe(drop)
+
+    async def _unsubscribe_all(self) -> None:
+        """Deleting every market from a ticker subscription leaves it with no filter, and Kalshi then
+        streams *every* market (~49k books held in memory by the next day). Drop the channels instead."""
+        if self._sids:
+            await self._send("unsubscribe", {"sids": sorted(self._sids.values())})
+        self._sids, self._seq = {}, {}
+        self._subscribed.clear()
+        self.books.clear()
 
     async def _unsubscribe(self, tickers: list[str]) -> None:
         """Stop streaming markets we no longer need (finished, or not yet close to the start)."""
@@ -359,6 +370,8 @@ class MarketStream:
                 raise RuntimeError(f"sequence gap on sid {sid}: {prev} -> {seq}")
         msg = m.get("msg") or {}
         ticker = msg.get("market_ticker")
+        if ticker and ticker not in self.wanted:
+            return  # a market we never asked for (or have since dropped): don't build a book for it
         if typ == "ticker" and ticker:
             if "yes_bid_dollars" not in msg or "yes_ask_dollars" not in msg:
                 return  # not a full top of book; keep what we have
