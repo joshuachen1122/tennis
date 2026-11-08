@@ -63,7 +63,7 @@ class StrategyParams:
     market_slope: float = 0.0
 
 
-PARAMS_VERSION = 6  # bump to replace parameters saved from the dashboard with these defaults
+PARAMS_VERSION = 7  # bump to replace parameters saved from the dashboard with these defaults
 
 DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Primary hypothesis: the Markov model calibrated to the pre-match price, updated with
@@ -80,7 +80,9 @@ DEFAULT_PARAMS: dict[str, StrategyParams] = {
     # Favorite-longshot test: near-certain leaders are underpriced when retail buys comebacks.
     # Fees are tiny at the extremes. Hold to settlement. The model matched the market above 85c,
     # so it keeps the raw model; the LLM still reviews it in shadow.
-    "closer": StrategyParams(min_edge=0.025, min_price=60, max_price=97, min_side_prob=0.90, exit_on_convergence=False,
+    # v7: min_price 85 (was 60). Entries under 85c lost 15.8c/contract on 31 trades, 90% CI [-29, -3],
+    # and kept losing after being flagged (12 more, -$61.51); 85c+ is break-even to positive (research/08).
+    "closer": StrategyParams(min_edge=0.025, min_price=85, max_price=97, min_side_prob=0.90, exit_on_convergence=False,
                              max_entries_per_match=2, min_match_volume=10_000),
     # v4 experiment: in-play favourites are underpriced. Market mids fit a slope of ~1.5 on 73
     # settled matches (cross-validated); 1.4 is shrunk toward no effect. The replay was about
