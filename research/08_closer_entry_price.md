@@ -22,3 +22,19 @@
   saved parameters. `maker` and `favourite` stay off by default.
 - **Judge it:** the 85¢+ entries from here on, against the 85–90¢ row above. If the 85–90¢ bucket keeps
   losing over the next 100 trades, raise the minimum to 90¢.
+
+## Result after 101 settled v7 trades (2026-11-09, export taken at 18:25 UTC)
+
+All settled `closer` trades opened since the v7 deploy (09:16 UTC Nov 8). Match-bootstrap 90% intervals:
+
+| Entry | Trades | Won | P&L | Per contract | 90% CI |
+|---|---|---|---|---|---|
+| 85–90¢ | 66 | 91% | +$58.27 | +3.4¢ | [−3.0, +8.8] |
+| 90–95¢ | 30 | 100% | +$55.64 | +7.6¢ | [+7.1, +8.0] |
+| 95¢ and up | 5 | 80% | −$20.43 | −15.7¢ | [−55.9, +4.7] |
+| all | 101 | 93% | +$93.48 | +3.6¢ | [−0.9, +7.6] |
+
+- **85–90¢ did not keep losing**, so by the rule above the minimum stays at 85¢.
+- 90–95¢ is positive again, now in both samples. Its interval is narrow only because all 30 trades won, so
+  it understates the risk.
+- Overall `closer` is still not proven: the 101-trade interval just includes zero.
