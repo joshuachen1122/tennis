@@ -22,9 +22,17 @@ from collections import defaultdict
 V2_START = "2026-11-03 21:35"  # v2 rules deployed (v1 before)
 
 
-def fetch(base: str, table: str) -> list[dict]:
-    with urllib.request.urlopen(f"{base}/api/export/{table}", timeout=60) as r:
-        return list(csv.DictReader(io.StringIO(r.read().decode())))
+def fetch(base: str, table: str, attempts: int = 3) -> list[dict]:
+    # The export streams from a busy shared-cpu VM and sometimes stalls mid-body; retry instead of dying.
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(f"{base}/api/export/{table}", timeout=120) as r:
+                return list(csv.DictReader(io.StringIO(r.read().decode())))
+        except (TimeoutError, OSError) as e:
+            if i == attempts - 1:
+                raise
+            print(f"  (fetch {table} failed: {e!r}; retrying)", file=sys.stderr)
+    return []
 
 
 def fee(count: float, cents: float) -> float:
